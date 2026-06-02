@@ -146,6 +146,12 @@ public static class DungeonSceneSetup
         GameObject playerGo = GameObject.Find("Player");
         if (playerGo != null)
         {
+            // Detach camera first to prevent it from being destroyed with the player!
+            Camera playerCam = playerGo.GetComponentInChildren<Camera>();
+            if (playerCam != null)
+            {
+                playerCam.transform.parent = null;
+            }
             Object.DestroyImmediate(playerGo);
         }
         playerGo = new GameObject("Player");
@@ -165,42 +171,38 @@ public static class DungeonSceneSetup
         fpc.mouseSensitivity = 2.0f;
         fpc.pushForce = 5.0f; // push force for doors
 
-        // Parent and position Main Camera
+        // Parent and position Main Camera robustly
         GameObject mainCamera = GameObject.FindWithTag("MainCamera");
         if (mainCamera == null)
         {
-            Camera existingCam = Object.FindObjectOfType<Camera>();
-            if (existingCam != null)
+            mainCamera = GameObject.Find("Main Camera");
+        }
+        if (mainCamera == null)
+        {
+            Camera anyCam = Object.FindAnyObjectByType<Camera>();
+            if (anyCam != null)
             {
-                mainCamera = existingCam.gameObject;
-                mainCamera.tag = "MainCamera";
-            }
-            else
-            {
-                mainCamera = new GameObject("Main Camera");
-                mainCamera.tag = "MainCamera";
-                mainCamera.AddComponent<Camera>();
+                mainCamera = anyCam.gameObject;
             }
         }
-
-        if (mainCamera != null)
+        if (mainCamera == null)
         {
-            mainCamera.transform.parent = playerGo.transform;
-            mainCamera.transform.localPosition = new Vector3(0, 1.4f, 0); // eye-level height
-            mainCamera.transform.localRotation = Quaternion.identity;
-            
-            Camera cam = mainCamera.GetComponent<Camera>();
-            if (cam != null)
-            {
-                cam.backgroundColor = new Color(0.02f, 0.02f, 0.04f);
-                cam.clearFlags = CameraClearFlags.SolidColor;
-                cam.farClipPlane = 100f;
-            }
+            mainCamera = new GameObject("Main Camera");
+            mainCamera.tag = "MainCamera";
+            mainCamera.AddComponent<Camera>();
+            mainCamera.AddComponent<AudioListener>();
+        }
 
-            if (mainCamera.GetComponent<AudioListener>() == null)
-            {
-                mainCamera.AddComponent<AudioListener>();
-            }
+        mainCamera.transform.parent = playerGo.transform;
+        mainCamera.transform.localPosition = new Vector3(0, 1.4f, 0); // eye-level height
+        mainCamera.transform.localRotation = Quaternion.identity;
+        
+        Camera cam = mainCamera.GetComponent<Camera>();
+        if (cam != null)
+        {
+            cam.backgroundColor = new Color(0.02f, 0.02f, 0.04f);
+            cam.clearFlags = CameraClearFlags.SolidColor;
+            cam.farClipPlane = 100f;
         }
 
         // 8. Auto-capture Screenshots for AI visual validation
