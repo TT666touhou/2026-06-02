@@ -92,6 +92,8 @@ public class GridDungeonGenerator : MonoBehaviour
     [SerializeField]
     private List<GameObject> generatedObjects = new List<GameObject>();
 
+    private HashSet<Vector3> spawnedPillarPositions = new HashSet<Vector3>();
+
     private DungeonCell[,,] grid;
     private List<Room> rooms = new List<Room>();
 
@@ -344,6 +346,12 @@ public class GridDungeonGenerator : MonoBehaviour
                     Vector3 cellCenter = new Vector3(x * cellSize, y * cellHeight, z * cellSize);
                     DungeonCell cell = grid[x, y, z];
 
+                    if (y > 0 && grid[x, y - 1, z].type == CellType.Stairs)
+                    {
+                        // Skip normal room/corridor instantiation for the cell directly above the stairs
+                        continue;
+                    }
+
                     if (cell.type == CellType.Room)
                     {
                         InstantiateRoom(x, y, z, cellCenter);
@@ -394,7 +402,7 @@ public class GridDungeonGenerator : MonoBehaviour
             if (ceilingPref != null)
             {
                 float ceilingYOffset = 0.001f * ((x + z) % 2);
-                Vector3 ceilingPos = center + new Vector3(0, cellHeight + ceilingYOffset, 0);
+                Vector3 ceilingPos = center + new Vector3(0, cellHeight - 0.02f + ceilingYOffset, 0); // Offset downward by 2cm to avoid floor z-fighting
                 GameObject ceiling = Instantiate(ceilingPref, ceilingPos, Quaternion.Euler(180, 0, 0), transform);
                 ceiling.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
                 generatedObjects.Add(ceiling);
@@ -432,6 +440,11 @@ public class GridDungeonGenerator : MonoBehaviour
             return; // Boundaries of the upper stairs shaft are handled by neighbors or InstantiateStairs
         }
 
+        // Compute wall normal offset to resolve parallel wall z-fighting
+        Vector3 wallNormal = new Vector3(dir.x, 0, dir.y);
+        float wallOffsetVal = 0f; // Set to 0 to prevent 1mm offset seams!
+        Vector3 finalOffset = offset + wallNormal * wallOffsetVal;
+
         // 2. If neighbor is the upper cell of stairs
         if (y > 0 && nx >= 0 && nx < width && nz >= 0 && nz < height && grid[nx, y - 1, nz].type == CellType.Stairs)
         {
@@ -440,9 +453,36 @@ public class GridDungeonGenerator : MonoBehaviour
                 GameObject wallPref = GetCellWallPrefab(x, y, z);
                 if (wallPref != null)
                 {
-                    GameObject wall = Instantiate(wallPref, center + offset, rotation, transform);
+                    GameObject wall = Instantiate(wallPref, center + finalOffset, rotation, transform);
                     wall.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
                     generatedObjects.Add(wall);
+                    // Spawn pillars at both ends of this wall to cover seams!
+                    SpawnDoorwayCornersPillars(x, y, z, center, dir);
+                }
+            }
+            else
+            {
+                // It is the exit of the stairs! Spawn a doorway transition into the room
+                GameObject doorwayPref = GetCellDoorwayPrefab(x, y, z);
+                if (doorwayPref != null)
+                {
+                    GameObject doorway = Instantiate(doorwayPref, center + finalOffset, rotation, transform);
+                    if (doorwayPref.name.ToLower().Contains("arc"))
+                    {
+                        doorway.transform.localScale = new Vector3(2.12f, 1.0f, 1.56f);
+                    }
+                    else
+                    {
+                        doorway.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
+                    }
+                    if (doorwayPref.name.Contains("doorway") || doorwayPref.name.Contains("arc"))
+                    {
+                        doorway.AddComponent<PhysicalDoor>();
+                    }
+                    generatedObjects.Add(doorway);
+                    
+                    // Spawn support pillars to cover seams between the doorframe columns and adjacent walls
+                    SpawnDoorwayCornersPillars(x, y, z, center, dir);
                 }
             }
             return;
@@ -468,9 +508,11 @@ public class GridDungeonGenerator : MonoBehaviour
                     GameObject wallPref = GetCellWallPrefab(x, y, z);
                     if (wallPref != null)
                     {
-                        GameObject wall = Instantiate(wallPref, center + offset, rotation, transform);
+                        GameObject wall = Instantiate(wallPref, center + finalOffset, rotation, transform);
                         wall.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
                         generatedObjects.Add(wall);
+                        // Spawn pillars at both ends of this wall to cover seams!
+                        SpawnDoorwayCornersPillars(x, y, z, center, dir);
                     }
                     return;
                 }
@@ -479,7 +521,7 @@ public class GridDungeonGenerator : MonoBehaviour
             GameObject doorwayPref = GetCellDoorwayPrefab(x, y, z);
             if (doorwayPref != null)
             {
-                GameObject doorway = Instantiate(doorwayPref, center + offset, rotation, transform);
+                GameObject doorway = Instantiate(doorwayPref, center + finalOffset, rotation, transform);
                 if (doorwayPref.name.ToLower().Contains("arc"))
                 {
                     doorway.transform.localScale = new Vector3(2.12f, 1.0f, 1.56f);
@@ -493,6 +535,9 @@ public class GridDungeonGenerator : MonoBehaviour
                     doorway.AddComponent<PhysicalDoor>();
                 }
                 generatedObjects.Add(doorway);
+
+                // Spawn support pillars to cover seams between the doorframe columns and adjacent walls
+                SpawnDoorwayCornersPillars(x, y, z, center, dir);
             }
         }
         else
@@ -505,9 +550,11 @@ public class GridDungeonGenerator : MonoBehaviour
             GameObject wallPref = GetCellWallPrefab(x, y, z);
             if (wallPref != null)
             {
-                GameObject wall = Instantiate(wallPref, center + offset, rotation, transform);
+                GameObject wall = Instantiate(wallPref, center + finalOffset, rotation, transform);
                 wall.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
                 generatedObjects.Add(wall);
+                // Spawn pillars at both ends of this wall to cover seams!
+                SpawnDoorwayCornersPillars(x, y, z, center, dir);
             }
         }
     }
@@ -537,7 +584,7 @@ public class GridDungeonGenerator : MonoBehaviour
             if (ceilingPref != null)
             {
                 float ceilingYOffset = 0.001f * ((x + z) % 2);
-                Vector3 ceilingPos = center + new Vector3(0, cellHeight + ceilingYOffset, 0);
+                Vector3 ceilingPos = center + new Vector3(0, cellHeight - 0.02f + ceilingYOffset, 0); // Offset downward by 2cm to avoid floor z-fighting
                 GameObject ceiling = Instantiate(ceilingPref, ceilingPos, Quaternion.Euler(180, 0, 0), transform);
                 ceiling.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
                 generatedObjects.Add(ceiling);
@@ -575,6 +622,11 @@ public class GridDungeonGenerator : MonoBehaviour
             return; // Boundaries of the upper stairs shaft are handled by neighbors or InstantiateStairs
         }
 
+        // Compute wall normal offset to resolve parallel wall z-fighting
+        Vector3 wallNormal = new Vector3(dir.x, 0, dir.y);
+        float wallOffsetVal = 0f; // Set to 0 to prevent 1mm offset seams!
+        Vector3 finalOffset = offset + wallNormal * wallOffsetVal;
+
         // 2. If neighbor is the upper cell of stairs
         if (y > 0 && nx >= 0 && nx < width && nz >= 0 && nz < height && grid[nx, y - 1, nz].type == CellType.Stairs)
         {
@@ -583,9 +635,36 @@ public class GridDungeonGenerator : MonoBehaviour
                 GameObject wallPref = GetCellWallPrefab(x, y, z);
                 if (wallPref != null)
                 {
-                    GameObject wall = Instantiate(wallPref, center + offset, rotation, transform);
+                    GameObject wall = Instantiate(wallPref, center + finalOffset, rotation, transform);
                     wall.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
                     generatedObjects.Add(wall);
+                    // Spawn pillars at both ends of this wall to cover seams!
+                    SpawnDoorwayCornersPillars(x, y, z, center, dir);
+                }
+            }
+            else
+            {
+                // It is the exit of the stairs! Spawn a doorway transition into the corridor
+                GameObject doorwayPref = GetCellDoorwayPrefab(x, y, z);
+                if (doorwayPref != null)
+                {
+                    GameObject doorway = Instantiate(doorwayPref, center + finalOffset, rotation, transform);
+                    if (doorwayPref.name.ToLower().Contains("arc"))
+                    {
+                        doorway.transform.localScale = new Vector3(2.12f, 1.0f, 1.56f);
+                    }
+                    else
+                    {
+                        doorway.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
+                    }
+                    if (doorwayPref.name.Contains("doorway") || doorwayPref.name.Contains("arc"))
+                    {
+                        doorway.AddComponent<PhysicalDoor>();
+                    }
+                    generatedObjects.Add(doorway);
+                    
+                    // Spawn support pillars to cover seams between the doorframe columns and adjacent walls
+                    SpawnDoorwayCornersPillars(x, y, z, center, dir);
                 }
             }
             return;
@@ -601,9 +680,11 @@ public class GridDungeonGenerator : MonoBehaviour
             GameObject wallPref = GetCellWallPrefab(x, y, z);
             if (wallPref != null)
             {
-                GameObject wall = Instantiate(wallPref, center + offset, rotation, transform);
+                GameObject wall = Instantiate(wallPref, center + finalOffset, rotation, transform);
                 wall.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
                 generatedObjects.Add(wall);
+                // Spawn pillars at both ends of this wall to cover seams!
+                SpawnDoorwayCornersPillars(x, y, z, center, dir);
             }
         }
         else if (neighborType == CellType.Corridor || neighborType == CellType.Stairs)
@@ -621,9 +702,11 @@ public class GridDungeonGenerator : MonoBehaviour
                     GameObject wallPref = GetCellWallPrefab(x, y, z);
                     if (wallPref != null)
                     {
-                        GameObject wall = Instantiate(wallPref, center + offset, rotation, transform);
+                        GameObject wall = Instantiate(wallPref, center + finalOffset, rotation, transform);
                         wall.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
                         generatedObjects.Add(wall);
+                        // Spawn pillars at both ends of this wall to cover seams!
+                        SpawnDoorwayCornersPillars(x, y, z, center, dir);
                     }
                     return;
                 }
@@ -635,7 +718,7 @@ public class GridDungeonGenerator : MonoBehaviour
                 GameObject doorwayPref = GetCellDoorwayPrefab(x, y, z);
                 if (doorwayPref != null)
                 {
-                    GameObject doorway = Instantiate(doorwayPref, center + offset, rotation, transform);
+                    GameObject doorway = Instantiate(doorwayPref, center + finalOffset, rotation, transform);
                     if (doorwayPref.name.ToLower().Contains("arc"))
                     {
                         doorway.transform.localScale = new Vector3(2.12f, 1.0f, 1.56f);
@@ -649,6 +732,9 @@ public class GridDungeonGenerator : MonoBehaviour
                         doorway.AddComponent<PhysicalDoor>();
                     }
                     generatedObjects.Add(doorway);
+
+                    // Spawn support pillars to cover seams between the doorframe columns and adjacent walls
+                    SpawnDoorwayCornersPillars(x, y, z, center, dir);
                 }
             }
         }
@@ -723,11 +809,79 @@ public class GridDungeonGenerator : MonoBehaviour
             Quaternion stairsInstanceRot = stairsRot * Quaternion.Euler(0, stairsRotationOffset, 0);
             GameObject stairsInstance = Instantiate(activeStairsPrefab, center, stairsInstanceRot, transform);
             
-            // Scale dynamically: width matches cell width, length scaled to span full cell size (6.0m)
-            float widthScale = activeStairsPrefab.name.ToLower().Contains("stairs_5") ? (cellSize / 2.0f) : 1.5f;
-            float lengthScale = activeStairsPrefab.name.ToLower().Contains("stairs_5") ? (cellSize / 4.077f) : 1.5f;
+            // Get the local bounds of the prefab mesh to align exactly with cell boundaries
+            float zMin = -2.0f;
+            float zMax = 2.0f;
+            float originalLength = 4.0f;
+            float originalWidth = 2.0f;
             
+            MeshFilter[] meshFilters = stairsInstance.GetComponentsInChildren<MeshFilter>();
+            if (meshFilters.Length > 0)
+            {
+                Bounds combinedBounds = new Bounds(Vector3.zero, Vector3.zero);
+                bool hasBounds = false;
+                
+                foreach (var mf in meshFilters)
+                {
+                    if (mf.sharedMesh != null)
+                    {
+                        Bounds localB = mf.sharedMesh.bounds;
+                        Vector3[] corners = new Vector3[8];
+                        Vector3 ext = localB.extents;
+                        Vector3 cnt = localB.center;
+                        corners[0] = cnt + new Vector3(ext.x, ext.y, ext.z);
+                        corners[1] = cnt + new Vector3(ext.x, ext.y, -ext.z);
+                        corners[2] = cnt + new Vector3(ext.x, -ext.y, ext.z);
+                        corners[3] = cnt + new Vector3(ext.x, -ext.y, -ext.z);
+                        corners[4] = cnt - new Vector3(ext.x, ext.y, ext.z);
+                        corners[5] = cnt - new Vector3(ext.x, ext.y, -ext.z);
+                        corners[6] = cnt - new Vector3(ext.x, -ext.y, ext.z);
+                        corners[7] = cnt - new Vector3(ext.x, -ext.y, -ext.z);
+                        
+                        for (int i = 0; i < 8; i++)
+                        {
+                            Vector3 localCorner = stairsInstance.transform.InverseTransformPoint(mf.transform.TransformPoint(corners[i]));
+                            if (!hasBounds)
+                            {
+                                combinedBounds = new Bounds(localCorner, Vector3.zero);
+                                hasBounds = true;
+                            }
+                            else
+                            {
+                                combinedBounds.Encapsulate(localCorner);
+                            }
+                        }
+                    }
+                }
+                
+                if (hasBounds)
+                {
+                    zMin = combinedBounds.min.z;
+                    zMax = combinedBounds.max.z;
+                    originalLength = combinedBounds.size.z;
+                    originalWidth = combinedBounds.size.x;
+                }
+            }
+
+            // Scale dynamically: width matches cell width, length scaled to span full cell size (6.0m)
+            float lengthScale = cellSize / originalLength;
+            float widthScale = (originalWidth > 0.1f) ? (cellSize / originalWidth) : 1.5f;
+            
+            if (activeStairsPrefab.name.ToLower().Contains("stairs_5"))
+            {
+                widthScale = cellSize / 2.0f; // 3.0f
+            }
+            else
+            {
+                widthScale = 1.5f;
+            }
+
             stairsInstance.transform.localScale = new Vector3(widthScale, 1.0f, lengthScale);
+            
+            // Translate along local Z axis to align bottom/top of stairs perfectly to cell boundaries (eliminating entrance gap)
+            float localZOffset = -cellSize * 0.5f - lengthScale * zMin;
+            stairsInstance.transform.position += stairsInstanceRot * new Vector3(0, 0, localZOffset);
+            
             generatedObjects.Add(stairsInstance);
         }
 
@@ -750,13 +904,13 @@ public class GridDungeonGenerator : MonoBehaviour
         if (ceilingPref != null)
         {
             float ceilingYOffset = 0.001f * ((x + z) % 2);
-            Vector3 ceilingPos = center + new Vector3(0, cellHeight * 2.0f + ceilingYOffset, 0);
+            Vector3 ceilingPos = center + new Vector3(0, cellHeight * 2.0f - 0.02f + ceilingYOffset, 0); // Offset downward by 2cm to avoid floor z-fighting
             GameObject ceiling = Instantiate(ceilingPref, ceilingPos, Quaternion.Euler(180, 0, 0), transform);
             ceiling.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
             generatedObjects.Add(ceiling);
         }
 
-        // 4. Spawn Enclosing Walls (only if adjacent cell is Empty to prevent duplicate z-fighting walls)
+        // 4. Spawn Enclosing Walls (only if adjacent cell is Empty/CircularTunnel/other non-wall-spawning cells to prevent duplicate z-fighting walls)
         GameObject wallPref = GetCellWallPrefab(x, y, z);
         if (wallPref != null)
         {
@@ -766,7 +920,8 @@ public class GridDungeonGenerator : MonoBehaviour
             // East wall (Y = y)
             if (ShouldSpawnStairsWall(x, y, z, vSideDir))
             {
-                GameObject wallE = Instantiate(wallPref, center + sideDir * (cellSize * 0.5f), Quaternion.Euler(0, rotY - 90f, 0), transform);
+                Vector3 wallPosE = center + sideDir * (cellSize * 0.5f);
+                GameObject wallE = Instantiate(wallPref, wallPosE, Quaternion.Euler(0, rotY - 90f, 0), transform);
                 wallE.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
                 generatedObjects.Add(wallE);
             }
@@ -774,7 +929,8 @@ public class GridDungeonGenerator : MonoBehaviour
             // West wall (Y = y)
             if (ShouldSpawnStairsWall(x, y, z, -vSideDir))
             {
-                GameObject wallW = Instantiate(wallPref, center - sideDir * (cellSize * 0.5f), Quaternion.Euler(0, rotY + 90f, 0), transform);
+                Vector3 wallPosW = center - sideDir * (cellSize * 0.5f);
+                GameObject wallW = Instantiate(wallPref, wallPosW, Quaternion.Euler(0, rotY + 90f, 0), transform);
                 wallW.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
                 generatedObjects.Add(wallW);
             }
@@ -782,7 +938,8 @@ public class GridDungeonGenerator : MonoBehaviour
             // East upper wall (Y = y+1)
             if (ShouldSpawnStairsWall(x, y, z, vSideDir + new Vector3Int(0, 1, 0)))
             {
-                GameObject wallE_up = Instantiate(wallPref, center + sideDir * (cellSize * 0.5f) + new Vector3(0, cellHeight, 0), Quaternion.Euler(0, rotY - 90f, 0), transform);
+                Vector3 wallPosE_up = center + sideDir * (cellSize * 0.5f) + new Vector3(0, cellHeight, 0);
+                GameObject wallE_up = Instantiate(wallPref, wallPosE_up, Quaternion.Euler(0, rotY - 90f, 0), transform);
                 wallE_up.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
                 generatedObjects.Add(wallE_up);
             }
@@ -790,7 +947,8 @@ public class GridDungeonGenerator : MonoBehaviour
             // West upper wall (Y = y+1)
             if (ShouldSpawnStairsWall(x, y, z, -vSideDir + new Vector3Int(0, 1, 0)))
             {
-                GameObject wallW_up = Instantiate(wallPref, center - sideDir * (cellSize * 0.5f) + new Vector3(0, cellHeight, 0), Quaternion.Euler(0, rotY + 90f, 0), transform);
+                Vector3 wallPosW_up = center - sideDir * (cellSize * 0.5f) + new Vector3(0, cellHeight, 0);
+                GameObject wallW_up = Instantiate(wallPref, wallPosW_up, Quaternion.Euler(0, rotY + 90f, 0), transform);
                 wallW_up.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
                 generatedObjects.Add(wallW_up);
             }
@@ -798,7 +956,8 @@ public class GridDungeonGenerator : MonoBehaviour
             // North wall (Y = y) - under the high end of the stairs
             if (ShouldSpawnStairsWall(x, y, z, vRiseDir))
             {
-                GameObject wallN = Instantiate(wallPref, center + riseDir * (cellSize * 0.5f), Quaternion.Euler(0, rotY + 180f, 0), transform);
+                Vector3 wallPosN = center + riseDir * (cellSize * 0.5f);
+                GameObject wallN = Instantiate(wallPref, wallPosN, Quaternion.Euler(0, rotY + 180f, 0), transform);
                 wallN.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
                 generatedObjects.Add(wallN);
             }
@@ -806,7 +965,8 @@ public class GridDungeonGenerator : MonoBehaviour
             // South wall (Y = y+1) - behind the low end of the stairs on the upper layer
             if (ShouldSpawnStairsWall(x, y, z, -vRiseDir + new Vector3Int(0, 1, 0)))
             {
-                GameObject wallS_up = Instantiate(wallPref, center - riseDir * (cellSize * 0.5f) + new Vector3(0, cellHeight, 0), Quaternion.Euler(0, rotY, 0), transform);
+                Vector3 wallPosS_up = center - riseDir * (cellSize * 0.5f) + new Vector3(0, cellHeight, 0);
+                GameObject wallS_up = Instantiate(wallPref, wallPosS_up, Quaternion.Euler(0, rotY, 0), transform);
                 wallS_up.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
                 generatedObjects.Add(wallS_up);
             }
@@ -825,8 +985,7 @@ public class GridDungeonGenerator : MonoBehaviour
             };
             foreach (var pos in lowerCorners)
             {
-                GameObject pillar = Instantiate(lowerPillarPref, pos, Quaternion.identity, transform);
-                generatedObjects.Add(pillar);
+                SpawnPillarAt(lowerPillarPref, pos);
             }
         }
 
@@ -842,8 +1001,66 @@ public class GridDungeonGenerator : MonoBehaviour
             };
             foreach (var pos in upperCorners)
             {
-                GameObject pillar = Instantiate(upperPillarPref, pos, Quaternion.identity, transform);
-                generatedObjects.Add(pillar);
+                SpawnPillarAt(upperPillarPref, pos);
+            }
+        }
+
+        // 6. Spawn Transition Doorways and Pillars if adjacent to a Circular Tunnel
+        Vector3Int vRiseDir2 = Vector3Int.RoundToInt(riseDir);
+        
+        // Transition doorway at entrance
+        Vector3Int entranceCoord = new Vector3Int(x - vRiseDir2.x, y, z - vRiseDir2.z);
+        if (entranceCoord.x >= 0 && entranceCoord.x < width && entranceCoord.z >= 0 && entranceCoord.z < height)
+        {
+            if (grid[entranceCoord.x, y, entranceCoord.z].type == CellType.Corridor && 
+                GetCellCorridorStyle(entranceCoord.x, y, entranceCoord.z) == CorridorStyle.CircularTunnel)
+            {
+                GameObject doorwayPref = GetCellDoorwayPrefab(x, y, z);
+                if (doorwayPref != null)
+                {
+                    float wallOffsetVal = 0f;
+                    Vector3 doorwayPos = center - riseDir * (cellSize * 0.5f) - riseDir * wallOffsetVal;
+                    GameObject doorway = Instantiate(doorwayPref, doorwayPos, Quaternion.Euler(0, rotY, 0), transform);
+                    if (doorwayPref.name.ToLower().Contains("arc"))
+                    {
+                        doorway.transform.localScale = new Vector3(2.12f, 1.0f, 1.56f);
+                    }
+                    else
+                    {
+                        doorway.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
+                    }
+                    generatedObjects.Add(doorway);
+                    
+                    SpawnDoorwayCornersPillars(x, y, z, center, -new Vector2Int(vRiseDir2.x, vRiseDir2.z));
+                }
+            }
+        }
+
+        // Transition doorway at exit
+        Vector3Int exitCoord = new Vector3Int(x + vRiseDir2.x, y + 1, z + vRiseDir2.z);
+        if (exitCoord.x >= 0 && exitCoord.x < width && exitCoord.z >= 0 && exitCoord.z < height)
+        {
+            if (grid[exitCoord.x, y + 1, exitCoord.z].type == CellType.Corridor && 
+                GetCellCorridorStyle(exitCoord.x, y + 1, exitCoord.z) == CorridorStyle.CircularTunnel)
+            {
+                GameObject doorwayPref = GetCellDoorwayPrefab(x, y + 1, z);
+                if (doorwayPref != null)
+                {
+                    float wallOffsetVal = 0f;
+                    Vector3 doorwayPos = center + riseDir * (cellSize * 0.5f) + new Vector3(0, cellHeight, 0) + riseDir * wallOffsetVal;
+                    GameObject doorway = Instantiate(doorwayPref, doorwayPos, Quaternion.Euler(0, rotY + 180f, 0), transform);
+                    if (doorwayPref.name.ToLower().Contains("arc"))
+                    {
+                        doorway.transform.localScale = new Vector3(2.12f, 1.0f, 1.56f);
+                    }
+                    else
+                    {
+                        doorway.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
+                    }
+                    generatedObjects.Add(doorway);
+                    
+                    SpawnDoorwayCornersPillars(x, y + 1, z, center + new Vector3(0, cellHeight, 0), new Vector2Int(vRiseDir2.x, vRiseDir2.z));
+                }
             }
         }
     }
@@ -871,7 +1088,12 @@ public class GridDungeonGenerator : MonoBehaviour
         }
 
         if (grid == null) return true;
-        return grid[nx, ny, nz].type == CellType.Empty;
+
+        DungeonCell neighbor = grid[nx, ny, nz];
+        bool isRoom = neighbor.type == CellType.Room;
+        bool isSquareCorridor = neighbor.type == CellType.Corridor && GetCellCorridorStyle(nx, ny, nz) == CorridorStyle.SquareCorridor;
+
+        return !(isRoom || isSquareCorridor);
     }
 
     private bool IsConnected(int x, int y, int z)
@@ -978,6 +1200,7 @@ public class GridDungeonGenerator : MonoBehaviour
     [ContextMenu("Clear Dungeon")]
     public void ClearDungeon()
     {
+        spawnedPillarPositions.Clear();
         foreach (var obj in generatedObjects)
         {
             if (obj != null)
@@ -996,6 +1219,46 @@ public class GridDungeonGenerator : MonoBehaviour
         {
             DestroyImmediate(child);
         }
+    }
+
+    private void SpawnPillarAt(GameObject prefab, Vector3 pos)
+    {
+        if (prefab == null) return;
+        
+        Vector3 key = new Vector3(
+            Mathf.Round(pos.x * 100f) / 100f,
+            Mathf.Round(pos.y * 100f) / 100f,
+            Mathf.Round(pos.z * 100f) / 100f
+        );
+
+        if (spawnedPillarPositions.Contains(key)) return;
+
+        GameObject pillar = Instantiate(prefab, pos, Quaternion.identity, transform);
+        generatedObjects.Add(pillar);
+        spawnedPillarPositions.Add(key);
+    }
+
+    private void SpawnDoorwayCornersPillars(int x, int y, int z, Vector3 center, Vector2Int dir)
+    {
+        GameObject pillarPref = (y % 2 == 0) ? pillarPrefab : (bunkerPillarPrefab != null ? bunkerPillarPrefab : pillarPrefab);
+        if (pillarPref == null) return;
+
+        Vector3 p1 = Vector3.zero;
+        Vector3 p2 = Vector3.zero;
+
+        if (dir.x != 0)
+        {
+            p1 = center + new Vector3(dir.x * cellSize * 0.5f, 0, cellSize * 0.5f);
+            p2 = center + new Vector3(dir.x * cellSize * 0.5f, 0, -cellSize * 0.5f);
+        }
+        else if (dir.y != 0)
+        {
+            p1 = center + new Vector3(cellSize * 0.5f, 0, dir.y * cellSize * 0.5f);
+            p2 = center + new Vector3(-cellSize * 0.5f, 0, dir.y * cellSize * 0.5f);
+        }
+
+        SpawnPillarAt(pillarPref, p1);
+        SpawnPillarAt(pillarPref, p2);
     }
 }
 

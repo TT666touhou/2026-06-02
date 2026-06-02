@@ -3,6 +3,7 @@ using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine.SceneManagement;
 using System.IO;
+using System.Collections.Generic;
 
 public static class DungeonSceneSetup
 {
@@ -226,9 +227,13 @@ public static class DungeonSceneSetup
         EditorSceneManager.MarkSceneDirty(scene);
         EditorSceneManager.SaveScene(scene, scenePath);
         Debug.Log("Dungeon Scene Auto Setup and Screenshot Capture Completed Successfully!");
+
+        // 10. Run Inspection Report
+        DungeonSceneInspector.InspectDungeon();
+
         if (!Application.isBatchMode)
         {
-            EditorUtility.DisplayDialog("Success", "Dungeon Test Scene has been generated, saved, and visual screenshots have been exported! Open 'Assets/Scenes/DungeonTest.unity' to view it.", "OK");
+            EditorUtility.DisplayDialog("Success", "Dungeon Test Scene has been generated, saved, and visual screenshots/reports have been exported! Open 'Assets/Scenes/DungeonTest.unity' to view it.", "OK");
         }
     }
 
@@ -317,5 +322,407 @@ public static class DungeonSceneSetup
             File.WriteAllBytes(savePath, bytes);
             Debug.Log($"[DungeonSceneSetup] Successfully captured & saved screenshot to {savePath}");
         }
+    }
+}
+
+public static class DungeonSceneInspector
+{
+    [MenuItem("Tools/Inspect Generated Dungeon")]
+    public static void InspectDungeon()
+    {
+        GameObject genGo = GameObject.Find("DungeonGenerator");
+        if (genGo == null)
+        {
+            Debug.LogError("[DungeonInspector] Could not find DungeonGenerator GameObject in the scene.");
+            if (!Application.isBatchMode)
+            {
+                EditorUtility.DisplayDialog("Error", "Could not find DungeonGenerator GameObject in the scene. Please generate the dungeon first.", "OK");
+            }
+            return;
+        }
+
+        GridDungeonGenerator generator = genGo.GetComponent<GridDungeonGenerator>();
+        if (generator == null)
+        {
+            Debug.LogError("[DungeonInspector] DungeonGenerator GameObject does not have GridDungeonGenerator component.");
+            return;
+        }
+
+        // Use Reflection to read private fields of GridDungeonGenerator
+        var gridField = typeof(GridDungeonGenerator).GetField("grid", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        if (gridField == null)
+        {
+            Debug.LogError("[DungeonInspector] Failed to retrieve 'grid' field via Reflection.");
+            return;
+        }
+
+        var grid = (GridDungeonGenerator.DungeonCell[,,])gridField.GetValue(generator);
+        if (grid == null)
+        {
+            Debug.LogError("[DungeonInspector] Grid is null. Please generate the dungeon layout first.");
+            return;
+        }
+
+        int width = generator.width;
+        int layers = generator.layers;
+        int height = generator.height;
+        float cellSize = generator.cellSize;
+        float cellHeight = generator.cellHeight;
+
+        // Get all transforms and renderers
+        Transform[] transforms = genGo.GetComponentsInChildren<Transform>(true);
+        Renderer[] renderers = genGo.GetComponentsInChildren<Renderer>(true);
+
+        System.Text.StringBuilder sb = new System.Text.StringBuilder();
+        sb.AppendLine("=== ADVANCED DUNGEON SCENE INSPECTION REPORT ===");
+        sb.AppendLine($"Report generated: {System.DateTime.Now}");
+        sb.AppendLine($"Total GameObjects scanned: {transforms.Length}");
+        sb.AppendLine($"Total Renderers scanned: {renderers.Length}");
+        sb.AppendLine();
+
+        int exactDuplicates = 0;
+        int overlappingWalls = 0;
+        int overlappingFloors = 0;
+        int voidHoleGaps = 0;
+        int floorHoleGaps = 0;
+        int ceilingHoleGaps = 0;
+        int walkwayHoleGaps = 0;
+
+        List<string> duplicateLogs = new List<string>();
+        List<string> floorOverlapLogs = new List<string>();
+        List<string> wallOverlapLogs = new List<string>();
+        List<string> voidHoleLogs = new List<string>();
+        List<string> floorHoleLogs = new List<string>();
+        List<string> ceilingHoleLogs = new List<string>();
+        List<string> walkwayHoleLogs = new List<string>();
+
+        // 1. Check for Exact Duplicates (position & rotation & name)
+        for (int i = 0; i < transforms.Length; i++)
+        {
+            for (int j = i + 1; j < transforms.Length; j++)
+            {
+                Transform t1 = transforms[i];
+                Transform t2 = transforms[j];
+
+                if (t1 == null || t2 == null || t1 == genGo.transform || t2 == genGo.transform) continue;
+
+                float posDist = Vector3.Distance(t1.position, t2.position);
+                float rotAngle = Quaternion.Angle(t1.rotation, t2.rotation);
+
+                if (posDist < 0.001f && rotAngle < 1f && t1.gameObject.name == t2.gameObject.name)
+                {
+                    exactDuplicates++;
+                    duplicateLogs.Add($"Exact Duplicate GameObject: '{t1.name}' at {t1.position.ToString("F3")} matches '{t2.name}' at {t2.position.ToString("F3")}");
+                }
+            }
+        }
+
+        // 2. Check for Overlapping Floors/Ceilings & Parallel Walls (Z-Fighting)
+        for (int i = 0; i < renderers.Length; i++)
+        {
+            for (int j = i + 1; j < renderers.Length; j++)
+            {
+                Renderer r1 = renderers[i];
+                Renderer r2 = renderers[j];
+
+                if (r1 == null || r2 == null) continue;
+
+                Vector3 p1 = r1.transform.position;
+                Vector3 p2 = r2.transform.position;
+
+                bool isFloor1 = r1.gameObject.name.ToLower().Contains("floor") || r1.gameObject.name.ToLower().Contains("ceiling");
+                bool isFloor2 = r2.gameObject.name.ToLower().Contains("floor") || r2.gameObject.name.ToLower().Contains("ceiling");
+
+                if (isFloor1 && isFloor2)
+                {
+                    // Check if centers are close in XZ plane (< 1.0m) and Y difference is < 5mm
+                    float xzDist = Vector2.Distance(new Vector2(p1.x, p1.z), new Vector2(p2.x, p2.z));
+                    float yDiff = Mathf.Abs(p1.y - p2.y);
+                    if (xzDist < 1.0f && yDiff < 0.005f)
+                    {
+                        overlappingFloors++;
+                        floorOverlapLogs.Add($"Floor/Ceiling Overlap (Z-Fighting): '{r1.gameObject.name}' at {p1.ToString("F3")} overlaps '{r2.gameObject.name}' at {p2.ToString("F3")} (Y-diff: {yDiff * 1000f:F1}mm)");
+                    }
+                    continue;
+                }
+
+                bool isWall1 = r1.gameObject.name.ToLower().Contains("wall") || r1.gameObject.name.ToLower().Contains("doorway") || r1.gameObject.name.ToLower().Contains("arc");
+                bool isWall2 = r2.gameObject.name.ToLower().Contains("wall") || r2.gameObject.name.ToLower().Contains("doorway") || r2.gameObject.name.ToLower().Contains("arc");
+
+                if (isWall1 && isWall2)
+                {
+                    // Check if parallel
+                    float rotDotF = Mathf.Abs(Vector3.Dot(r1.transform.forward, r2.transform.forward));
+                    float rotDotR = Mathf.Abs(Vector3.Dot(r1.transform.right, r2.transform.right));
+                    bool isParallel = rotDotF > 0.99f || rotDotR > 0.99f;
+
+                    if (isParallel)
+                    {
+                        Vector3 dir = (p2 - p1);
+                        float distToPlane = Mathf.Abs(Vector3.Dot(dir, r1.transform.forward));
+                        float distToPlane2 = Mathf.Abs(Vector3.Dot(dir, r1.transform.right));
+                        float minPlaneDist = Mathf.Min(distToPlane, distToPlane2);
+
+                        // If on same plane (diff < 5mm) and center distance is < 1.0m
+                        if (minPlaneDist < 0.005f && Vector3.Distance(p1, p2) < 1.0f)
+                        {
+                            overlappingWalls++;
+                            wallOverlapLogs.Add($"Parallel Wall Overlap (Z-Fighting): '{r1.gameObject.name}' at {p1.ToString("F3")} overlaps '{r2.gameObject.name}' at {p2.ToString("F3")} (Plane-diff: {minPlaneDist * 1000f:F1}mm)");
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Grid-based Gap and Hole Inspection
+        Vector2Int[] dirs = {
+            new Vector2Int(0, 1),   // North
+            new Vector2Int(0, -1),  // South
+            new Vector2Int(1, 0),   // East
+            new Vector2Int(-1, 0)   // West
+        };
+
+        for (int y = 0; y < layers; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                for (int z = 0; z < height; z++)
+                {
+                    var cell = grid[x, y, z];
+                    if (cell.type == GridDungeonGenerator.CellType.Empty) continue;
+
+                    Vector3 cellCenter = new Vector3(x * cellSize, y * cellHeight, z * cellSize);
+
+                    // Skip circular sci-fi tunnels for boundary check (self-contained meshes)
+                    bool isCellCircularTunnel = false;
+                    if (cell.type == GridDungeonGenerator.CellType.Corridor)
+                    {
+                        if (generator.dungeonTheme == GridDungeonGenerator.DungeonTheme.Mixed && y % 2 == 0)
+                        {
+                            isCellCircularTunnel = false;
+                        }
+                        else if (generator.corridorStyle == GridDungeonGenerator.CorridorStyle.CircularTunnel)
+                        {
+                            isCellCircularTunnel = true;
+                        }
+                        else if (generator.corridorStyle == GridDungeonGenerator.CorridorStyle.Mixed)
+                        {
+                            int cellHash = (x * 73856093) ^ (z * 19349663) ^ (y * 83492791) ^ generator.seed;
+                            isCellCircularTunnel = (System.Math.Abs(cellHash) % 2 == 0);
+                        }
+                    }
+
+                    if (isCellCircularTunnel)
+                    {
+                        // Circular tunnels are self-enclosing, skip boundary wall verification
+                        continue;
+                    }
+
+                    // A. Floor Verification
+                    if (cell.hasFloor)
+                    {
+                        bool hasFloorMesh = false;
+                        Vector3 floorCenter = cellCenter;
+                        foreach (var r in renderers)
+                        {
+                            if (r == null) continue;
+                            if (r.gameObject.name.ToLower().Contains("floor"))
+                            {
+                                float distSq = r.bounds.SqrDistance(floorCenter);
+                                if (distSq < 0.05f)
+                                {
+                                    hasFloorMesh = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if (!hasFloorMesh)
+                        {
+                            floorHoleGaps++;
+                            floorHoleLogs.Add($"Floor Hole: Cell ({x}, {y}, {z}) of type {cell.type} has hasFloor=true but no floor geometry is instantiated nearby.");
+                        }
+                    }
+
+                    // B. Ceiling Verification
+                    if (cell.hasCeiling)
+                    {
+                        bool hasCeilingMesh = false;
+                        Vector3 ceilingCenter = cellCenter + new Vector3(0, cellHeight, 0);
+                        foreach (var r in renderers)
+                        {
+                            if (r == null) continue;
+                            if (r.gameObject.name.ToLower().Contains("ceiling") || r.gameObject.name.ToLower().Contains("floor"))
+                            {
+                                float distSq = r.bounds.SqrDistance(ceilingCenter);
+                                if (distSq < 0.05f)
+                                {
+                                    hasCeilingMesh = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if (!hasCeilingMesh)
+                        {
+                            ceilingHoleGaps++;
+                            ceilingHoleLogs.Add($"Ceiling Hole: Cell ({x}, {y}, {z}) of type {cell.type} has hasCeiling=true but no ceiling geometry is instantiated nearby.");
+                        }
+                    }
+
+                    // C. Wall boundary verification facing Empty
+                    foreach (var dir in dirs)
+                    {
+                        int nx = x + dir.x;
+                        int nz = z + dir.y;
+
+                        bool neighborIsEmpty = false;
+                        if (nx < 0 || nx >= width || nz < 0 || nz >= height)
+                        {
+                            neighborIsEmpty = true;
+                        }
+                        else
+                        {
+                            neighborIsEmpty = (grid[nx, y, nz].type == GridDungeonGenerator.CellType.Empty);
+                        }
+
+                        if (neighborIsEmpty)
+                        {
+                            // There must be a wall separating the cell from empty space
+                            Vector3 boundaryCenter = cellCenter + new Vector3(dir.x * cellSize * 0.5f, cellHeight * 0.5f, dir.y * cellSize * 0.5f);
+                            bool hasWallMesh = false;
+                            foreach (var r in renderers)
+                            {
+                                if (r == null) continue;
+                                string rName = r.gameObject.name.ToLower();
+                                if (rName.Contains("wall") || rName.Contains("doorway") || rName.Contains("arc") || rName.Contains("tunnel"))
+                                {
+                                    float distSq = r.bounds.SqrDistance(boundaryCenter);
+                                    if (distSq < 0.05f)
+                                    {
+                                        hasWallMesh = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (!hasWallMesh)
+                            {
+                                voidHoleGaps++;
+                                voidHoleLogs.Add($"Void Wall Hole: Cell ({x}, {y}, {z}) facing Empty direction {dir} has no enclosing boundary wall. Boundary position: {boundaryCenter.ToString("F2")}");
+                            }
+                        }
+                    }
+
+                    // D. Fall Hazard / Walkway Gaps (checking adjacent floorless cells like stairs upper cell)
+                    if (cell.hasFloor)
+                    {
+                        foreach (var dir in dirs)
+                        {
+                            int nx = x + dir.x;
+                            int nz = z + dir.y;
+
+                            if (nx >= 0 && nx < width && nz >= 0 && nz < height)
+                            {
+                                var neighbor = grid[nx, y, nz];
+                                // If neighbor has no floor (like stairs upper cell)
+                                if (neighbor.type != GridDungeonGenerator.CellType.Empty && !neighbor.hasFloor)
+                                {
+                                    // Check if target cell (x, y, z) is the upper exit of the stairs at (nx, y-1, nz)
+                                    bool isExit = IsStairsUpperExit(grid, nx, y - 1, nz, x, y, z, width, layers, height);
+                                    if (!isExit)
+                                    {
+                                        // There MUST be a wall separating the room/corridor from the floorless upper stairs cell!
+                                        Vector3 boundaryCenter = cellCenter + new Vector3(dir.x * cellSize * 0.5f, cellHeight * 0.5f, dir.y * cellSize * 0.5f);
+                                        bool hasWallMesh = false;
+                                        foreach (var r in renderers)
+                                        {
+                                            if (r == null) continue;
+                                            string rName = r.gameObject.name.ToLower();
+                                            if (rName.Contains("wall") || rName.Contains("doorway") || rName.Contains("arc"))
+                                            {
+                                                float distSq = r.bounds.SqrDistance(boundaryCenter);
+                                                if (distSq < 0.05f)
+                                                {
+                                                    hasWallMesh = true;
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                        if (!hasWallMesh)
+                                        {
+                                            walkwayHoleGaps++;
+                                            walkwayHoleLogs.Add($"Walkway Fall Hazard: Playable cell ({x}, {y}, {z}) has floor, but neighbor cell ({nx}, {y}, {nz}) is floorless (above stairs) and there is no wall separating them. Boundary: {boundaryCenter.ToString("F2")}");
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Write report
+        sb.AppendLine("--- 1. EXACT DUPLICATE GAMEOBJECTS (Z-Fighting & Perf hit) ---");
+        sb.AppendLine($"Count: {exactDuplicates}");
+        foreach (var log in duplicateLogs) sb.AppendLine("  " + log);
+        sb.AppendLine();
+
+        sb.AppendLine("--- 2. OVERLAPPING FLOORS & CEILINGS ---");
+        sb.AppendLine($"Count: {overlappingFloors}");
+        foreach (var log in floorOverlapLogs) sb.AppendLine("  " + log);
+        sb.AppendLine();
+
+        sb.AppendLine("--- 3. OVERLAPPING PARALLEL WALLS ---");
+        sb.AppendLine($"Count: {overlappingWalls}");
+        foreach (var log in wallOverlapLogs) sb.AppendLine("  " + log);
+        sb.AppendLine();
+
+        sb.AppendLine("--- 4. VOID WALL HOLES (Holes exposing skybox/void) ---");
+        sb.AppendLine($"Count: {voidHoleGaps}");
+        foreach (var log in voidHoleLogs) sb.AppendLine("  " + log);
+        sb.AppendLine();
+
+        sb.AppendLine("--- 5. MISSING FLOORS ---");
+        sb.AppendLine($"Count: {floorHoleGaps}");
+        foreach (var log in floorHoleLogs) sb.AppendLine("  " + log);
+        sb.AppendLine();
+
+        sb.AppendLine("--- 6. MISSING CEILINGS ---");
+        sb.AppendLine($"Count: {ceilingHoleGaps}");
+        foreach (var log in ceilingHoleLogs) sb.AppendLine("  " + log);
+        sb.AppendLine();
+
+        sb.AppendLine("--- 7. WALKWAY FALL HAZARDS (Holes looking into vertical shafts) ---");
+        sb.AppendLine($"Count: {walkwayHoleGaps}");
+        foreach (var log in walkwayHoleLogs) sb.AppendLine("  " + log);
+        sb.AppendLine();
+
+        string report = sb.ToString();
+        string reportPath = "Assets/dungeon_inspection_report.txt";
+        File.WriteAllText(reportPath, report);
+        Debug.Log($"[DungeonInspector] Detailed inspection complete. Saved report to: {reportPath}");
+
+        if (!Application.isBatchMode)
+        {
+            EditorUtility.DisplayDialog("Inspection Complete", 
+                $"Dungeon Scene Inspected!\n\n" +
+                $"- Exact Duplicates: {exactDuplicates}\n" +
+                $"- Floor Overlaps: {overlappingFloors}\n" +
+                $"- Wall Overlaps: {overlappingWalls}\n" +
+                $"- Void Wall Holes: {voidHoleGaps}\n" +
+                $"- Floor Holes: {floorHoleGaps}\n" +
+                $"- Walkway Fall Hazards: {walkwayHoleGaps}\n\n" +
+                $"Details saved to: {reportPath}", "OK");
+        }
+    }
+
+    private static bool IsStairsUpperExit(GridDungeonGenerator.DungeonCell[,,] grid, int stairsX, int stairsY, int stairsZ, int targetX, int targetY, int targetZ, int width, int layers, int height)
+    {
+        if (grid == null) return false;
+        if (stairsX < 0 || stairsX >= width || stairsY < 0 || stairsY >= layers || stairsZ < 0 || stairsZ >= height) return false;
+        if (grid[stairsX, stairsY, stairsZ].type != GridDungeonGenerator.CellType.Stairs) return false;
+        float rotY = grid[stairsX, stairsY, stairsZ].rotation;
+        Quaternion stairsRot = Quaternion.Euler(0, rotY, 0);
+        Vector3Int riseDir = Vector3Int.RoundToInt(stairsRot * Vector3.forward);
+        return (targetX == stairsX + riseDir.x && targetY == stairsY + 1 && targetZ == stairsZ + riseDir.z);
     }
 }

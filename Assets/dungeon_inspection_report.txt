@@ -1,0 +1,26 @@
+=== ADVANCED DUNGEON SCENE INSPECTION REPORT ===
+Report generated: 2026/6/3 上午 01:40:20
+Total GameObjects scanned: 283
+Total Renderers scanned: 270
+
+--- 1. EXACT DUPLICATE GAMEOBJECTS (Z-Fighting & Perf hit) ---
+Count: 0
+
+--- 2. OVERLAPPING FLOORS & CEILINGS ---
+Count: 0
+
+--- 3. OVERLAPPING PARALLEL WALLS ---
+Count: 0
+
+--- 4. VOID WALL HOLES (Holes exposing skybox/void) ---
+Count: 0
+
+--- 5. MISSING FLOORS ---
+Count: 0
+
+--- 6. MISSING CEILINGS ---
+Count: 0
+
+--- 7. WALKWAY FALL HAZARDS (Holes looking into vertical shafts) ---
+Count: 0
+

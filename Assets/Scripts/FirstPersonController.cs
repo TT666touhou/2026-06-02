@@ -20,6 +20,9 @@ public class FirstPersonController : MonoBehaviour
     private float rotationX = 0f;
     private float verticalVelocity = 0f;
 
+    private string screenshotDir = "C:/Users/88698/.gemini/antigravity-ide/brain/de671271-394d-4fcf-8e8a-43ab3a9b592c/screenshots";
+    private int screenshotCount = 0;
+
     private void Start()
     {
         controller = GetComponent<CharacterController>();
@@ -31,6 +34,27 @@ public class FirstPersonController : MonoBehaviour
 
         // Initialize flashlight
         SetupFlashlight();
+
+        // Initialize and clear screenshots folder at startup
+        try
+        {
+            if (System.IO.Directory.Exists(screenshotDir))
+            {
+                string[] files = System.IO.Directory.GetFiles(screenshotDir);
+                foreach (string file in files)
+                {
+                    System.IO.File.Delete(file);
+                }
+            }
+            else
+            {
+                System.IO.Directory.CreateDirectory(screenshotDir);
+            }
+        }
+        catch (System.Exception ex)
+        {
+            Debug.LogError($"[ScreenshotTool] Failed to initialize screenshots directory: {ex.Message}");
+        }
     }
 
     private void SetupFlashlight()
@@ -61,6 +85,66 @@ public class FirstPersonController : MonoBehaviour
         HandleMovement();
         HandleFlashlightToggle();
         HandleInteraction();
+        HandleScreenshotCapture();
+    }
+
+    private void HandleScreenshotCapture()
+    {
+        if (Input.GetKeyDown(KeyCode.P))
+        {
+            screenshotCount++;
+            try
+            {
+                if (!System.IO.Directory.Exists(screenshotDir))
+                {
+                    System.IO.Directory.CreateDirectory(screenshotDir);
+                }
+
+                string imagePath = System.IO.Path.Combine(screenshotDir, $"screenshot_{screenshotCount}.png");
+                string textPath = System.IO.Path.Combine(screenshotDir, $"screenshot_{screenshotCount}.txt");
+
+                CaptureCameraView(playerCamera, imagePath);
+
+                string textContent = $"Position: {transform.position.ToString("F3")}\n" +
+                                     $"Rotation: {transform.rotation.eulerAngles.ToString("F3")}\n" +
+                                     $"Camera Rotation: {playerCamera.transform.rotation.eulerAngles.ToString("F3")}\n" +
+                                     $"Time: {System.DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")}";
+                System.IO.File.WriteAllText(textPath, textContent);
+
+                Debug.Log($"[ScreenshotTool] Captured screenshot {screenshotCount} to {imagePath} at position {transform.position}");
+            }
+            catch (System.Exception ex)
+            {
+                Debug.LogError($"[ScreenshotTool] Failed to capture screenshot: {ex.Message}");
+            }
+        }
+    }
+
+    private void CaptureCameraView(Camera cam, string path)
+    {
+        if (cam == null) return;
+        int width = Screen.width > 0 ? Screen.width : 1024;
+        int height = Screen.height > 0 ? Screen.height : 576;
+
+        RenderTexture rt = new RenderTexture(width, height, 24);
+        RenderTexture prevRt = cam.targetTexture;
+        cam.targetTexture = rt;
+
+        Texture2D screenShot = new Texture2D(width, height, TextureFormat.RGB24, false);
+        cam.Render();
+
+        RenderTexture.active = rt;
+        screenShot.ReadPixels(new Rect(0, 0, width, height), 0, 0);
+        screenShot.Apply();
+
+        cam.targetTexture = prevRt;
+        RenderTexture.active = null;
+        Destroy(rt);
+
+        byte[] bytes = screenShot.EncodeToPNG();
+        Destroy(screenShot);
+
+        System.IO.File.WriteAllBytes(path, bytes);
     }
 
     private void HandleInteraction()
