@@ -52,19 +52,33 @@ public static class DungeonSceneSetup
         generator.tunnelTJunction = AssetDatabase.LoadAssetAtPath<GameObject>(basePath + "tunnel_junction_three_way.prefab");
         generator.tunnelXJunction = AssetDatabase.LoadAssetAtPath<GameObject>(basePath + "tunnel_junction_four_way.prefab");
 
+        string gothicPath = "Assets/Prefabs/PSX Mega Pack 3.1.3/";
+        generator.gothicFloorPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(gothicPath + "floor_ceiling_1.prefab");
+        generator.gothicWallPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(gothicPath + "wall_1_plain.prefab");
+        generator.gothicCeilingPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(gothicPath + "floor_ceiling_1.prefab");
+        generator.gothicDoorwayPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(gothicPath + "arc_1_wall_1_plain.prefab");
+        generator.stairsPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(gothicPath + "stairs_mp_1.prefab");
+
         if (generator.floorPrefab == null || generator.wallPrefab == null || generator.ceilingPrefab == null || 
             generator.doorwayPrefab == null || generator.tunnelStraight == null || generator.tunnelCorner == null || 
-            generator.tunnelTJunction == null || generator.tunnelXJunction == null)
+            generator.tunnelTJunction == null || generator.tunnelXJunction == null ||
+            generator.gothicFloorPrefab == null || generator.gothicWallPrefab == null || generator.gothicCeilingPrefab == null ||
+            generator.gothicDoorwayPrefab == null || generator.stairsPrefab == null)
         {
-            Debug.LogError("Failed to load some hybrid dungeon prefabs! Please check paths under Assets/Prefabs/PSX Bunkers v1.8.8/");
+            Debug.LogError("Failed to load some hybrid/Gothic dungeon prefabs! Please check paths under Assets/Prefabs/PSX Bunkers v1.8.8/ and Assets/Prefabs/PSX Mega Pack 3.1.3/");
             return;
         }
 
-        generator.width = 10;
-        generator.height = 10;
+        generator.width = 12;
+        generator.height = 12;
+        generator.layers = 2; // 2 layers for staircase verticality
         generator.cellSize = 6.0f;
-        generator.roomDensity = 0.20f;
+        generator.cellHeight = 3.0f;
+        generator.roomsPerLayer = 3;
+        generator.minRoomSize = 2;
+        generator.maxRoomSize = 3;
         generator.seed = 1337;
+        generator.dungeonTheme = GridDungeonGenerator.DungeonTheme.Mixed; // Mixed theme (even Y = Gothic, odd Y = Bunker)
         generator.corridorStyle = GridDungeonGenerator.CorridorStyle.Mixed;
 
         // 5. Generate the dungeon
@@ -87,23 +101,27 @@ public static class DungeonSceneSetup
             }
         }
 
-        // Add some local point lights to highlight the bunker retro feel!
+        // Add some local point lights to highlight the dungeon retro feel on all layers!
         Random.InitState(generator.seed);
-        int lightCount = 8;
-        for (int i = 0; i < lightCount; i++)
+        int lightCountPerLayer = 6;
+        for (int y = 0; y < generator.layers; y++)
         {
-            GameObject pointLightGo = new GameObject($"PointLight_Warm_{i}");
-            pointLightGo.transform.parent = genGo.transform;
-            
-            float xPos = Random.Range(1, generator.width - 1) * generator.cellSize + Random.Range(-2.0f, 2.0f);
-            float zPos = Random.Range(1, generator.height - 1) * generator.cellSize + Random.Range(-2.0f, 2.0f);
-            pointLightGo.transform.position = new Vector3(xPos, 1.8f, zPos);
-            
-            Light pointLight = pointLightGo.AddComponent<Light>();
-            pointLight.type = LightType.Point;
-            pointLight.color = new Color(1.0f, 0.55f, 0.15f); // Warm retro tungsten glow
-            pointLight.range = 10.0f;
-            pointLight.intensity = 2.5f;
+            for (int i = 0; i < lightCountPerLayer; i++)
+            {
+                GameObject pointLightGo = new GameObject($"PointLight_Warm_L{y}_{i}");
+                pointLightGo.transform.parent = genGo.transform;
+                
+                float xPos = Random.Range(1, generator.width - 1) * generator.cellSize + Random.Range(-2.0f, 2.0f);
+                float zPos = Random.Range(1, generator.height - 1) * generator.cellSize + Random.Range(-2.0f, 2.0f);
+                float yPos = y * generator.cellHeight + 1.8f;
+                pointLightGo.transform.position = new Vector3(xPos, yPos, zPos);
+                
+                Light pointLight = pointLightGo.AddComponent<Light>();
+                pointLight.type = LightType.Point;
+                pointLight.color = (y % 2 == 0) ? new Color(0.85f, 0.65f, 0.45f) : new Color(1.0f, 0.55f, 0.15f); // warmer flame tone vs tungsten retro glow
+                pointLight.range = 10.0f;
+                pointLight.intensity = 3.0f;
+            }
         }
 
         float centerX = (generator.width * generator.cellSize) * 0.5f;

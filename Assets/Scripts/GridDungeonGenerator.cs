@@ -7,7 +7,8 @@ public class GridDungeonGenerator : MonoBehaviour
     {
         Empty,
         Room,
-        Corridor
+        Corridor,
+        Stairs
     }
 
     public enum CorridorStyle
@@ -17,11 +18,45 @@ public class GridDungeonGenerator : MonoBehaviour
         Mixed
     }
 
-    [Header("Room Prefabs")]
+    public enum DungeonTheme
+    {
+        Bunker,
+        GothicRuins,
+        Mixed
+    }
+
+    [System.Serializable]
+    public struct DungeonCell
+    {
+        public CellType type;
+        public int roomId;
+        public int rotation; // Euler Y rotation for stairs or tunnels
+        public bool hasFloor;
+        public bool hasCeiling;
+    }
+
+    [System.Serializable]
+    public class Room
+    {
+        public int id;
+        public int x;
+        public int y; // layer
+        public int z;
+        public int w;
+        public int h;
+    }
+
+    [Header("Bunker Theme Prefabs")]
     public GameObject floorPrefab;       // floor_1 (4m x 4m)
     public GameObject wallPrefab;        // wall_1_plain (4.06m x 3m)
     public GameObject ceilingPrefab;     // floor_1 flipped upside down as ceiling (4m x 4m)
     public GameObject doorwayPrefab;     // doorway_2_plain (4.06m x 3m)
+
+    [Header("Gothic Theme Prefabs")]
+    public GameObject gothicFloorPrefab;    // floor_ceiling_1 (4m x 4m)
+    public GameObject gothicWallPrefab;     // wall_1_plain (Gothic version, 4m x 3m)
+    public GameObject gothicCeilingPrefab;  // floor_ceiling_1 flipped upside down
+    public GameObject gothicDoorwayPrefab;  // arc_1_wall_1_plain (stone archway)
 
     [Header("Tunnel Prefabs")]
     public GameObject tunnelStraight;    // tunnel_straight (3.5m wide, 6m long)
@@ -29,24 +64,32 @@ public class GridDungeonGenerator : MonoBehaviour
     public GameObject tunnelTJunction;   // tunnel_junction_three_way (6m cell T)
     public GameObject tunnelXJunction;   // tunnel_junction_four_way (6m cell X)
 
-    [Header("Corridor Style")]
+    [Header("Staircase Prefabs")]
+    public GameObject stairsPrefab;      // stairs_mp_1 (4m wide, 3.2m high, 6m long)
+
+    [Header("Dungeon Theme & Layout Settings")]
+    public DungeonTheme dungeonTheme = DungeonTheme.GothicRuins;
     public CorridorStyle corridorStyle = CorridorStyle.SquareCorridor;
 
-    [Header("Grid Layout Settings")]
-    public int width = 10;               // Width of the dungeon in 6m cells
-    public int height = 10;              // Height of the dungeon in 6m cells
-    public float cellSize = 6.0f;        // Size of one grid cell (6 meters)
+    public int width = 12;               // Grid width in cells
+    public int height = 12;              // Grid depth in cells
+    public int layers = 2;               // Number of vertical layers (levels)
+    public float cellSize = 6.0f;        // Size of one cell (6 meters)
+    public float cellHeight = 3.0f;      // Height of one layer (3 meters)
 
     [Header("Generation Settings")]
-    [Range(0.1f, 0.4f)]
-    public float roomDensity = 0.2f;     // Target ratio of rooms to grid size
+    public int minRoomSize = 2;          // Min room size in cells
+    public int maxRoomSize = 3;          // Max room size in cells
+    public int roomsPerLayer = 3;        // Number of random rooms per level
+    public float roomDensity = 0.20f;    // Deprecated but kept for API compatibility
     public int seed = 1337;
 
     [HideInInspector]
     [SerializeField]
     private List<GameObject> generatedObjects = new List<GameObject>();
 
-    private CellType[,] grid;
+    private DungeonCell[,,] grid;
+    private List<Room> rooms = new List<Room>();
 
     [ContextMenu("Generate Dungeon")]
     public void GenerateDungeon()
@@ -54,77 +97,163 @@ public class GridDungeonGenerator : MonoBehaviour
         ClearDungeon();
         Random.InitState(seed);
 
-        grid = new CellType[width, height];
-
-        // 1. Generate Layout (Rooms & Corridors)
+        // 1. Generate 3D grid layout
         GenerateLayout();
 
-        // 2. Instantiate Geometry based on Layout
+        // 2. Instantiate all modular geometries
         InstantiateDungeon();
     }
 
     private void GenerateLayout()
     {
-        // Initialize as Empty
+        grid = new DungeonCell[width, layers, height];
+        rooms.Clear();
+
+        // Initialize cells as Empty with floors and ceilings enabled
         for (int x = 0; x < width; x++)
         {
-            for (int z = 0; z < height; z++)
+            for (int y = 0; y < layers; y++)
             {
-                grid[x, z] = CellType.Empty;
+                for (int z = 0; z < height; z++)
+                {
+                    grid[x, y, z] = new DungeonCell
+                    {
+                        type = CellType.Empty,
+                        roomId = 0,
+                        rotation = 0,
+                        hasFloor = true,
+                        hasCeiling = true
+                    };
+                }
             }
         }
 
-        // Place Rooms randomly
-        int targetRooms = Mathf.Max(3, Mathf.RoundToInt(width * height * roomDensity));
-        List<Vector2Int> roomCenters = new List<Vector2Int>();
-        int attempts = 0;
-
-        while (roomCenters.Count < targetRooms && attempts < 150)
+        // Place Rooms on each layer using Box Packing
+        int currentRoomId = 1;
+        for (int y = 0; y < layers; y++)
         {
-            attempts++;
-            int rx = Random.Range(1, width - 1);
-            int rz = Random.Range(1, height - 1);
-
-            if (grid[rx, rz] == CellType.Empty)
+            int placedRooms = 0;
+            int attempts = 0;
+            while (placedRooms < roomsPerLayer && attempts < 150)
             {
-                grid[rx, rz] = CellType.Room;
-                roomCenters.Add(new Vector2Int(rx, rz));
+                attempts++;
+                int rw = Random.Range(minRoomSize, maxRoomSize + 1);
+                int rh = Random.Range(minRoomSize, maxRoomSize + 1);
+                
+                // Keep 1 grid buffer on borders
+                int rx = Random.Range(1, width - rw - 1);
+                int rz = Random.Range(1, height - rh - 1);
+
+                // Check overlap with existing rooms (including buffer zone)
+                bool overlap = false;
+                for (int tx = rx - 1; tx < rx + rw + 1; tx++)
+                {
+                    for (int tz = rz - 1; tz < rz + rh + 1; tz++)
+                    {
+                        if (grid[tx, y, tz].type != CellType.Empty)
+                        {
+                            overlap = true;
+                            break;
+                        }
+                    }
+                    if (overlap) break;
+                }
+
+                if (!overlap)
+                {
+                    Room r = new Room { id = currentRoomId++, x = rx, y = y, z = rz, w = rw, h = rh };
+                    rooms.Add(r);
+                    placedRooms++;
+
+                    // Mark grid cells
+                    for (int tx = rx; tx < rx + rw; tx++)
+                    {
+                        for (int tz = rz; tz < rz + rh; tz++)
+                        {
+                            grid[tx, y, tz].type = CellType.Room;
+                            grid[tx, y, tz].roomId = r.id;
+                        }
+                    }
+                }
             }
         }
 
-        // Connect Rooms using Corridors via A* Pathfinding
-        for (int i = 0; i < roomCenters.Count - 1; i++)
+        // Connect Rooms on each layer using A* pathfinding
+        for (int y = 0; y < layers; y++)
         {
-            ConnectCells(roomCenters[i], roomCenters[i + 1]);
+            List<Room> layerRooms = rooms.FindAll(r => r.y == y);
+            for (int i = 0; i < layerRooms.Count - 1; i++)
+            {
+                Vector3Int start = new Vector3Int(layerRooms[i].x + layerRooms[i].w / 2, y, layerRooms[i].z + layerRooms[i].h / 2);
+                Vector3Int end = new Vector3Int(layerRooms[i + 1].x + layerRooms[i + 1].w / 2, y, layerRooms[i + 1].z + layerRooms[i + 1].h / 2);
+                ConnectCells(start, end);
+            }
+            if (layerRooms.Count > 2)
+            {
+                Vector3Int start = new Vector3Int(layerRooms[layerRooms.Count - 1].x + layerRooms[layerRooms.Count - 1].w / 2, y, layerRooms[layerRooms.Count - 1].z + layerRooms[layerRooms.Count - 1].h / 2);
+                Vector3Int end = new Vector3Int(layerRooms[0].x + layerRooms[0].w / 2, y, layerRooms[0].z + layerRooms[0].h / 2);
+                ConnectCells(start, end);
+            }
         }
-        // Connect the last one to the first to create loops
-        if (roomCenters.Count > 2)
+
+        // Connect layers vertically using stairs
+        for (int y = 0; y < layers - 1; y++)
         {
-            ConnectCells(roomCenters[roomCenters.Count - 1], roomCenters[0]);
+            bool stairPlaced = false;
+            int attempts = 0;
+            while (!stairPlaced && attempts < 300)
+            {
+                attempts++;
+                // Leave room for Northward stairs run (needs z+1 buffer)
+                int sx = Random.Range(2, width - 2);
+                int sz = Random.Range(2, height - 3);
+
+                CellType lowerType = grid[sx, y, sz].type;
+                CellType upperType = grid[sx, y + 1, sz + 1].type;
+
+                // We can place stairs if the lower cell and the upper landing cell are valid
+                if ((lowerType == CellType.Room || lowerType == CellType.Corridor) &&
+                    (upperType == CellType.Room || upperType == CellType.Corridor))
+                {
+                    // Place stairs in (sx, y, sz) rising North
+                    grid[sx, y, sz].type = CellType.Stairs;
+                    grid[sx, y, sz].rotation = 0; // 0 degrees = North
+                    grid[sx, y, sz].hasCeiling = false; // Carve ceiling so player can stand
+
+                    // Carve the floor of the cell directly above the stairs
+                    grid[sx, y + 1, sz].hasFloor = false;
+
+                    // Ensure connection pathways on the upper layer are open
+                    if (grid[sx, y + 1, sz].type == CellType.Empty) grid[sx, y + 1, sz].type = CellType.Corridor;
+                    if (grid[sx, y + 1, sz + 1].type == CellType.Empty) grid[sx, y + 1, sz + 1].type = CellType.Corridor;
+
+                    stairPlaced = true;
+                }
+            }
         }
     }
 
-    private void ConnectCells(Vector2Int start, Vector2Int end)
+    private void ConnectCells(Vector3Int start, Vector3Int end)
     {
-        PriorityQueue<PathNode> openSet = new PriorityQueue<PathNode>();
-        Dictionary<Vector2Int, Vector2Int> cameFrom = new Dictionary<Vector2Int, Vector2Int>();
-        Dictionary<Vector2Int, float> gScore = new Dictionary<Vector2Int, float>();
+        PriorityQueue<PathNode3D> openSet = new PriorityQueue<PathNode3D>();
+        Dictionary<Vector3Int, Vector3Int> cameFrom = new Dictionary<Vector3Int, Vector3Int>();
+        Dictionary<Vector3Int, float> gScore = new Dictionary<Vector3Int, float>();
 
-        openSet.Enqueue(new PathNode(start, 0), 0);
+        openSet.Enqueue(new PathNode3D(start, 0), 0);
         gScore[start] = 0;
 
-        Vector2Int[] dirs = {
-            new Vector2Int(0, 1),  // N
-            new Vector2Int(0, -1), // S
-            new Vector2Int(1, 0),  // E
-            new Vector2Int(-1, 0)  // W
+        Vector3Int[] dirs = {
+            new Vector3Int(0, 0, 1),   // N
+            new Vector3Int(0, 0, -1),  // S
+            new Vector3Int(1, 0, 0),   // E
+            new Vector3Int(-1, 0, 0)   // W
         };
 
         bool pathFound = false;
 
         while (openSet.Count > 0)
         {
-            PathNode current = openSet.Dequeue();
+            PathNode3D current = openSet.Dequeue();
 
             if (current.Position == end)
             {
@@ -134,12 +263,13 @@ public class GridDungeonGenerator : MonoBehaviour
 
             foreach (var dir in dirs)
             {
-                Vector2Int neighbor = current.Position + dir;
-                if (neighbor.x < 0 || neighbor.x >= width || neighbor.y < 0 || neighbor.y >= height)
+                Vector3Int neighbor = current.Position + dir;
+                if (neighbor.x < 1 || neighbor.x >= width - 1 || neighbor.z < 1 || neighbor.z >= height - 1)
                     continue;
 
                 float cost = 1.0f;
-                if (grid[neighbor.x, neighbor.y] == CellType.Corridor || grid[neighbor.x, neighbor.y] == CellType.Room)
+                CellType nType = grid[neighbor.x, neighbor.y, neighbor.z].type;
+                if (nType == CellType.Corridor || nType == CellType.Room)
                 {
                     cost = 0.1f;
                 }
@@ -149,20 +279,20 @@ public class GridDungeonGenerator : MonoBehaviour
                 {
                     cameFrom[neighbor] = current.Position;
                     gScore[neighbor] = tentativeGScore;
-                    float h = Vector2Int.Distance(neighbor, end);
-                    openSet.Enqueue(new PathNode(neighbor, tentativeGScore), tentativeGScore + h);
+                    float h = Vector3.Distance(new Vector3(neighbor.x, neighbor.y * cellHeight, neighbor.z), new Vector3(end.x, end.y * cellHeight, end.z));
+                    openSet.Enqueue(new PathNode3D(neighbor, tentativeGScore), tentativeGScore + h);
                 }
             }
         }
 
         if (pathFound)
         {
-            Vector2Int curr = end;
+            Vector3Int curr = end;
             while (curr != start)
             {
-                if (grid[curr.x, curr.y] == CellType.Empty)
+                if (grid[curr.x, curr.y, curr.z].type == CellType.Empty)
                 {
-                    grid[curr.x, curr.y] = CellType.Corridor;
+                    grid[curr.x, curr.y, curr.z].type = CellType.Corridor;
                 }
                 curr = cameFrom[curr];
             }
@@ -171,78 +301,83 @@ public class GridDungeonGenerator : MonoBehaviour
 
     private void InstantiateDungeon()
     {
-        for (int x = 0; x < width; x++)
+        for (int y = 0; y < layers; y++)
         {
-            for (int z = 0; z < height; z++)
+            for (int x = 0; x < width; x++)
             {
-                Vector3 cellCenter = new Vector3(x * cellSize, 0, z * cellSize);
+                for (int z = 0; z < height; z++)
+                {
+                    Vector3 cellCenter = new Vector3(x * cellSize, y * cellHeight, z * cellSize);
+                    DungeonCell cell = grid[x, y, z];
 
-                if (grid[x, z] == CellType.Room)
-                {
-                    InstantiateRoom(x, z, cellCenter);
-                }
-                else if (grid[x, z] == CellType.Corridor)
-                {
-                    CorridorStyle style = GetCellCorridorStyle(x, z);
-                    if (style == CorridorStyle.CircularTunnel)
+                    if (cell.type == CellType.Room)
                     {
-                        InstantiateCorridor(x, z, cellCenter);
+                        InstantiateRoom(x, y, z, cellCenter);
                     }
-                    else
+                    else if (cell.type == CellType.Corridor)
                     {
-                        InstantiateSquareCorridor(x, z, cellCenter);
+                        CorridorStyle style = GetCellCorridorStyle(x, y, z);
+                        if (style == CorridorStyle.CircularTunnel)
+                        {
+                            InstantiateCorridor(x, y, z, cellCenter);
+                        }
+                        else
+                        {
+                            InstantiateSquareCorridor(x, y, z, cellCenter);
+                        }
+                    }
+                    else if (cell.type == CellType.Stairs)
+                    {
+                        InstantiateStairs(x, y, z, cellCenter);
                     }
                 }
             }
         }
     }
 
-    private CorridorStyle GetCellCorridorStyle(int x, int z)
+    private void InstantiateRoom(int x, int y, int z, Vector3 center)
     {
-        if (x < 0 || x >= width || z < 0 || z >= height) return corridorStyle;
-        if (grid[x, z] != CellType.Corridor) return corridorStyle;
-        if (corridorStyle == CorridorStyle.Mixed)
-        {
-            // Deterministic selection based on cell coordinates and seed
-            int cellHash = (x * 73856093) ^ (z * 19349663) ^ seed;
-            return (System.Math.Abs(cellHash) % 2 == 0) ? CorridorStyle.CircularTunnel : CorridorStyle.SquareCorridor;
-        }
-        return corridorStyle;
-    }
+        DungeonCell cell = grid[x, y, z];
 
-    private void InstantiateSquareCorridor(int x, int z, Vector3 center)
-    {
-        // 1. Spawn Floor (floor_1) scaled by Vector3(1.5, 1.0, 1.5)
-        if (floorPrefab != null)
+        // 1. Spawn Floor (if hasFloor is true)
+        if (cell.hasFloor)
         {
-            GameObject floor = Instantiate(floorPrefab, center, Quaternion.identity, transform);
-            floor.transform.localScale = new Vector3(1.5f, 1.0f, 1.5f);
-            generatedObjects.Add(floor);
+            GameObject floorPref = GetCellFloorPrefab(x, y, z);
+            if (floorPref != null)
+            {
+                GameObject floor = Instantiate(floorPref, center, Quaternion.identity, transform);
+                floor.transform.localScale = new Vector3(1.5f, 1.0f, 1.5f);
+                generatedObjects.Add(floor);
+            }
         }
 
-        // 2. Spawn Ceiling (floor_1 flipped upside down at Y=3.0m) scaled by Vector3(1.5, 1.0, 1.5)
-        if (ceilingPrefab != null)
+        // 2. Spawn Ceiling (if hasCeiling is true)
+        if (cell.hasCeiling)
         {
-            GameObject ceiling = Instantiate(ceilingPrefab, center + new Vector3(0, 3.0f, 0), Quaternion.Euler(180, 0, 0), transform);
-            ceiling.transform.localScale = new Vector3(1.5f, 1.0f, 1.5f);
-            generatedObjects.Add(ceiling);
+            GameObject ceilingPref = GetCellCeilingPrefab(x, y, z);
+            if (ceilingPref != null)
+            {
+                GameObject ceiling = Instantiate(ceilingPref, center + new Vector3(0, cellHeight, 0), Quaternion.Euler(180, 0, 0), transform);
+                ceiling.transform.localScale = new Vector3(1.5f, 1.0f, 1.5f);
+                generatedObjects.Add(ceiling);
+            }
         }
 
         // 3. Spawn Walls / Doorways along the 6m boundaries
         // North boundary (Z = +3m)
-        SpawnCorridorBoundary(x, z, center, new Vector2Int(0, 1), new Vector3(0, 0, 3.0f), Quaternion.Euler(0, 180, 0));
+        SpawnRoomBoundary(x, y, z, center, new Vector2Int(0, 1), new Vector3(0, 0, cellSize * 0.5f), Quaternion.Euler(0, 180, 0));
 
         // South boundary (Z = -3m)
-        SpawnCorridorBoundary(x, z, center, new Vector2Int(0, -1), new Vector3(0, 0, -3.0f), Quaternion.Euler(0, 0, 0));
+        SpawnRoomBoundary(x, y, z, center, new Vector2Int(0, -1), new Vector3(0, 0, -cellSize * 0.5f), Quaternion.Euler(0, 0, 0));
 
         // East boundary (X = +3m)
-        SpawnCorridorBoundary(x, z, center, new Vector2Int(1, 0), new Vector3(3.0f, 0, 0), Quaternion.Euler(0, 270, 0));
+        SpawnRoomBoundary(x, y, z, center, new Vector2Int(1, 0), new Vector3(cellSize * 0.5f, 0, 0), Quaternion.Euler(0, 270, 0));
 
         // West boundary (X = -3m)
-        SpawnCorridorBoundary(x, z, center, new Vector2Int(-1, 0), new Vector3(-3.0f, 0, 0), Quaternion.Euler(0, 90, 0));
+        SpawnRoomBoundary(x, y, z, center, new Vector2Int(-1, 0), new Vector3(-cellSize * 0.5f, 0, 0), Quaternion.Euler(0, 90, 0));
     }
 
-    private void SpawnCorridorBoundary(int x, int z, Vector3 center, Vector2Int dir, Vector3 offset, Quaternion rotation)
+    private void SpawnRoomBoundary(int x, int y, int z, Vector3 center, Vector2Int dir, Vector3 offset, Quaternion rotation)
     {
         int nx = x + dir.x;
         int nz = z + dir.y;
@@ -250,75 +385,7 @@ public class GridDungeonGenerator : MonoBehaviour
         CellType neighborType = CellType.Empty;
         if (nx >= 0 && nx < width && nz >= 0 && nz < height)
         {
-            neighborType = grid[nx, nz];
-        }
-
-        if (neighborType == CellType.Empty)
-        {
-            if (wallPrefab != null)
-            {
-                GameObject wall = Instantiate(wallPrefab, center + offset, rotation, transform);
-                wall.transform.localScale = new Vector3(1.5f, 1.0f, 1.5f);
-                generatedObjects.Add(wall);
-            }
-        }
-        else if (neighborType == CellType.Corridor)
-        {
-            // If the neighbor is a circular tunnel, we spawn a doorway frame as a transition
-            if (GetCellCorridorStyle(nx, nz) == CorridorStyle.CircularTunnel)
-            {
-                if (doorwayPrefab != null)
-                {
-                    GameObject doorway = Instantiate(doorwayPrefab, center + offset, rotation, transform);
-                    doorway.transform.localScale = new Vector3(1.5f, 1.0f, 1.5f);
-                    doorway.AddComponent<PhysicalDoor>();
-                    generatedObjects.Add(doorway);
-                }
-            }
-        }
-    }
-
-    private void InstantiateRoom(int x, int z, Vector3 center)
-    {
-        // 1. Spawn Floor (floor_1) scaled by Vector3(1.5, 1.0, 1.5) to cover 6.06m x 6.06m
-        if (floorPrefab != null)
-        {
-            GameObject floor = Instantiate(floorPrefab, center, Quaternion.identity, transform);
-            floor.transform.localScale = new Vector3(1.5f, 1.0f, 1.5f);
-            generatedObjects.Add(floor);
-        }
-
-        // 2. Spawn Ceiling (floor_1 flipped upside down at Y=3.0m) scaled by Vector3(1.5, 1.0, 1.5)
-        if (ceilingPrefab != null)
-        {
-            GameObject ceiling = Instantiate(ceilingPrefab, center + new Vector3(0, 3.0f, 0), Quaternion.Euler(180, 0, 0), transform);
-            ceiling.transform.localScale = new Vector3(1.5f, 1.0f, 1.5f);
-            generatedObjects.Add(ceiling);
-        }
-
-        // 3. Spawn Walls / Doorways along the 6m boundaries scaled by Vector3(1.5, 1.0, 1.5)
-        // North boundary (Z = +3m)
-        SpawnRoomBoundary(x, z, center, new Vector2Int(0, 1), new Vector3(0, 0, 3.0f), Quaternion.Euler(0, 180, 0));
-
-        // South boundary (Z = -3m)
-        SpawnRoomBoundary(x, z, center, new Vector2Int(0, -1), new Vector3(0, 0, -3.0f), Quaternion.Euler(0, 0, 0));
-
-        // East boundary (X = +3m)
-        SpawnRoomBoundary(x, z, center, new Vector2Int(1, 0), new Vector3(3.0f, 0, 0), Quaternion.Euler(0, 270, 0));
-
-        // West boundary (X = -3m)
-        SpawnRoomBoundary(x, z, center, new Vector2Int(-1, 0), new Vector3(-3.0f, 0, 0), Quaternion.Euler(0, 90, 0));
-    }
-
-    private void SpawnRoomBoundary(int x, int z, Vector3 center, Vector2Int dir, Vector3 offset, Quaternion rotation)
-    {
-        int nx = x + dir.x;
-        int nz = z + dir.y;
-
-        CellType neighborType = CellType.Empty;
-        if (nx >= 0 && nx < width && nz >= 0 && nz < height)
-        {
-            neighborType = grid[nx, nz];
+            neighborType = grid[nx, y, nz].type;
         }
 
         // Merge adjacent Room cells seamlessly. Place walls/doorways only if not adjacent to another Room.
@@ -326,33 +393,135 @@ public class GridDungeonGenerator : MonoBehaviour
         {
             return;
         }
-        else if (neighborType == CellType.Corridor)
+        else if (neighborType == CellType.Corridor || neighborType == CellType.Stairs)
         {
-            if (doorwayPrefab != null)
+            GameObject doorwayPref = GetCellDoorwayPrefab(x, y, z);
+            if (doorwayPref != null)
             {
-                GameObject doorway = Instantiate(doorwayPrefab, center + offset, rotation, transform);
-                doorway.transform.localScale = new Vector3(1.5f, 1.0f, 1.5f);
-                doorway.AddComponent<PhysicalDoor>();
+                GameObject doorway = Instantiate(doorwayPref, center + offset, rotation, transform);
+                if (doorwayPref.name.ToLower().Contains("arc"))
+                {
+                    doorway.transform.localScale = new Vector3(2.0f, 1.0f, 1.5f);
+                }
+                else
+                {
+                    doorway.transform.localScale = new Vector3(1.5f, 1.0f, 1.5f);
+                }
+                if (doorwayPref.name.Contains("doorway") || doorwayPref.name.Contains("arc"))
+                {
+                    doorway.AddComponent<PhysicalDoor>();
+                }
                 generatedObjects.Add(doorway);
             }
         }
         else
         {
-            if (wallPrefab != null)
+            GameObject wallPref = GetCellWallPrefab(x, y, z);
+            if (wallPref != null)
             {
-                GameObject wall = Instantiate(wallPrefab, center + offset, rotation, transform);
+                GameObject wall = Instantiate(wallPref, center + offset, rotation, transform);
                 wall.transform.localScale = new Vector3(1.5f, 1.0f, 1.5f);
                 generatedObjects.Add(wall);
             }
         }
     }
 
-    private void InstantiateCorridor(int x, int z, Vector3 center)
+    private void InstantiateSquareCorridor(int x, int y, int z, Vector3 center)
     {
-        bool N = IsConnected(x, z + 1);
-        bool S = IsConnected(x, z - 1);
-        bool E = IsConnected(x + 1, z);
-        bool W = IsConnected(x - 1, z);
+        DungeonCell cell = grid[x, y, z];
+
+        // 1. Spawn Floor
+        if (cell.hasFloor)
+        {
+            GameObject floorPref = GetCellFloorPrefab(x, y, z);
+            if (floorPref != null)
+            {
+                GameObject floor = Instantiate(floorPref, center, Quaternion.identity, transform);
+                floor.transform.localScale = new Vector3(1.5f, 1.0f, 1.5f);
+                generatedObjects.Add(floor);
+            }
+        }
+
+        // 2. Spawn Ceiling
+        if (cell.hasCeiling)
+        {
+            GameObject ceilingPref = GetCellCeilingPrefab(x, y, z);
+            if (ceilingPref != null)
+            {
+                GameObject ceiling = Instantiate(ceilingPref, center + new Vector3(0, cellHeight, 0), Quaternion.Euler(180, 0, 0), transform);
+                ceiling.transform.localScale = new Vector3(1.5f, 1.0f, 1.5f);
+                generatedObjects.Add(ceiling);
+            }
+        }
+
+        // 3. Spawn Walls / Doorways along the 6m boundaries
+        // North boundary (Z = +3m)
+        SpawnCorridorBoundary(x, y, z, center, new Vector2Int(0, 1), new Vector3(0, 0, cellSize * 0.5f), Quaternion.Euler(0, 180, 0));
+
+        // South boundary (Z = -3m)
+        SpawnCorridorBoundary(x, y, z, center, new Vector2Int(0, -1), new Vector3(0, 0, -cellSize * 0.5f), Quaternion.Euler(0, 0, 0));
+
+        // East boundary (X = +3m)
+        SpawnCorridorBoundary(x, y, z, center, new Vector2Int(1, 0), new Vector3(cellSize * 0.5f, 0, 0), Quaternion.Euler(0, 270, 0));
+
+        // West boundary (X = -3m)
+        SpawnCorridorBoundary(x, y, z, center, new Vector2Int(-1, 0), new Vector3(-cellSize * 0.5f, 0, 0), Quaternion.Euler(0, 90, 0));
+    }
+
+    private void SpawnCorridorBoundary(int x, int y, int z, Vector3 center, Vector2Int dir, Vector3 offset, Quaternion rotation)
+    {
+        int nx = x + dir.x;
+        int nz = z + dir.y;
+
+        CellType neighborType = CellType.Empty;
+        if (nx >= 0 && nx < width && nz >= 0 && nz < height)
+        {
+            neighborType = grid[nx, y, nz].type;
+        }
+
+        if (neighborType == CellType.Empty)
+        {
+            GameObject wallPref = GetCellWallPrefab(x, y, z);
+            if (wallPref != null)
+            {
+                GameObject wall = Instantiate(wallPref, center + offset, rotation, transform);
+                wall.transform.localScale = new Vector3(1.5f, 1.0f, 1.5f);
+                generatedObjects.Add(wall);
+            }
+        }
+        else if (neighborType == CellType.Corridor)
+        {
+            // If the neighbor is a circular tunnel, spawn a doorway frame as a transition
+            if (GetCellCorridorStyle(nx, y, nz) == CorridorStyle.CircularTunnel)
+            {
+                GameObject doorwayPref = GetCellDoorwayPrefab(x, y, z);
+                if (doorwayPref != null)
+                {
+                    GameObject doorway = Instantiate(doorwayPref, center + offset, rotation, transform);
+                    if (doorwayPref.name.ToLower().Contains("arc"))
+                    {
+                        doorway.transform.localScale = new Vector3(2.0f, 1.0f, 1.5f);
+                    }
+                    else
+                    {
+                        doorway.transform.localScale = new Vector3(1.5f, 1.0f, 1.5f);
+                    }
+                    if (doorwayPref.name.Contains("doorway") || doorwayPref.name.Contains("arc"))
+                    {
+                        doorway.AddComponent<PhysicalDoor>();
+                    }
+                    generatedObjects.Add(doorway);
+                }
+            }
+        }
+    }
+
+    private void InstantiateCorridor(int x, int y, int z, Vector3 center)
+    {
+        bool N = IsConnected(x, y, z + 1);
+        bool S = IsConnected(x, y, z - 1);
+        bool E = IsConnected(x + 1, y, z);
+        bool W = IsConnected(x - 1, y, z);
 
         int connectionsCount = (N ? 1 : 0) + (S ? 1 : 0) + (E ? 1 : 0) + (W ? 1 : 0);
 
@@ -366,14 +535,8 @@ public class GridDungeonGenerator : MonoBehaviour
         }
         else if (connectionsCount == 2)
         {
-            if (N && S)
-            {
-                SpawnTunnel(tunnelStraight, center, Quaternion.Euler(0, 0, 0));
-            }
-            else if (E && W)
-            {
-                SpawnTunnel(tunnelStraight, center, Quaternion.Euler(0, 90, 0));
-            }
+            if (N && S) SpawnTunnel(tunnelStraight, center, Quaternion.Euler(0, 0, 0));
+            else if (E && W) SpawnTunnel(tunnelStraight, center, Quaternion.Euler(0, 90, 0));
             else
             {
                 if (W && N) SpawnTunnel(tunnelCorner, center, Quaternion.Euler(0, 0, 0));
@@ -404,22 +567,129 @@ public class GridDungeonGenerator : MonoBehaviour
         }
     }
 
-    private bool IsConnected(int x, int z)
+    private void InstantiateStairs(int x, int y, int z, Vector3 center)
+    {
+        if (stairsPrefab != null)
+        {
+            // Center stairs in the cell
+            GameObject stairsInstance = Instantiate(stairsPrefab, center, Quaternion.Euler(0, grid[x, y, z].rotation, 0), transform);
+            stairsInstance.transform.localScale = new Vector3(1.5f, 1.0f, 1.0f);
+            generatedObjects.Add(stairsInstance);
+        }
+
+        // Spawn side enclosing walls for the stairs on both layers (y and y+1)
+        GameObject wallPref = GetCellWallPrefab(x, y, z);
+        if (wallPref != null)
+        {
+            // East wall (X = +3.0)
+            GameObject wallE = Instantiate(wallPref, center + new Vector3(cellSize * 0.5f, 0, 0), Quaternion.Euler(0, 270, 0), transform);
+            wallE.transform.localScale = new Vector3(1.5f, 1.0f, 1.5f);
+            generatedObjects.Add(wallE);
+
+            // West wall (X = -3.0)
+            GameObject wallW = Instantiate(wallPref, center + new Vector3(-cellSize * 0.5f, 0, 0), Quaternion.Euler(0, 90, 0), transform);
+            wallW.transform.localScale = new Vector3(1.5f, 1.0f, 1.5f);
+            generatedObjects.Add(wallW);
+
+            // East upper wall (Y = y+1)
+            GameObject wallE_up = Instantiate(wallPref, center + new Vector3(cellSize * 0.5f, cellHeight, 0), Quaternion.Euler(0, 270, 0), transform);
+            wallE_up.transform.localScale = new Vector3(1.5f, 1.0f, 1.5f);
+            generatedObjects.Add(wallE_up);
+
+            // West upper wall (Y = y+1)
+            GameObject wallW_up = Instantiate(wallPref, center + new Vector3(-cellSize * 0.5f, cellHeight, 0), Quaternion.Euler(0, 90, 0), transform);
+            wallW_up.transform.localScale = new Vector3(1.5f, 1.0f, 1.5f);
+            generatedObjects.Add(wallW_up);
+        }
+    }
+
+    private bool IsConnected(int x, int y, int z)
     {
         if (x < 0 || x >= width || z < 0 || z >= height) return false;
-        return grid[x, z] == CellType.Room || grid[x, z] == CellType.Corridor;
+        CellType type = grid[x, y, z].type;
+        return type == CellType.Room || type == CellType.Corridor || type == CellType.Stairs;
+    }
+
+    private CorridorStyle GetCellCorridorStyle(int x, int y, int z)
+    {
+        if (x < 0 || x >= width || z < 0 || z >= height) return corridorStyle;
+        if (grid[x, y, z].type != CellType.Corridor) return corridorStyle;
+        if (corridorStyle == CorridorStyle.Mixed)
+        {
+            int cellHash = (x * 73856093) ^ (z * 19349663) ^ (y * 83492791) ^ seed;
+            return (System.Math.Abs(cellHash) % 2 == 0) ? CorridorStyle.CircularTunnel : CorridorStyle.SquareCorridor;
+        }
+        return corridorStyle;
+    }
+
+    private GameObject GetFloorPrefab()
+    {
+        return (dungeonTheme == DungeonTheme.GothicRuins) ? gothicFloorPrefab : floorPrefab;
+    }
+
+    private GameObject GetCeilingPrefab()
+    {
+        return (dungeonTheme == DungeonTheme.GothicRuins) ? gothicCeilingPrefab : ceilingPrefab;
+    }
+
+    private GameObject GetWallPrefab()
+    {
+        return (dungeonTheme == DungeonTheme.GothicRuins) ? gothicWallPrefab : wallPrefab;
+    }
+
+    private GameObject GetDoorwayPrefab()
+    {
+        return (dungeonTheme == DungeonTheme.GothicRuins) ? gothicDoorwayPrefab : doorwayPrefab;
+    }
+
+    private GameObject GetCellFloorPrefab(int x, int y, int z)
+    {
+        if (dungeonTheme == DungeonTheme.Mixed)
+        {
+            return (y % 2 == 0) ? gothicFloorPrefab : floorPrefab;
+        }
+        return GetFloorPrefab();
+    }
+
+    private GameObject GetCellCeilingPrefab(int x, int y, int z)
+    {
+        if (dungeonTheme == DungeonTheme.Mixed)
+        {
+            return (y % 2 == 0) ? gothicCeilingPrefab : ceilingPrefab;
+        }
+        return GetCeilingPrefab();
+    }
+
+    private GameObject GetCellWallPrefab(int x, int y, int z)
+    {
+        if (dungeonTheme == DungeonTheme.Mixed)
+        {
+            return (y % 2 == 0) ? gothicWallPrefab : wallPrefab;
+        }
+        return GetWallPrefab();
+    }
+
+    private GameObject GetCellDoorwayPrefab(int x, int y, int z)
+    {
+        if (dungeonTheme == DungeonTheme.Mixed)
+        {
+            return (y % 2 == 0) ? gothicDoorwayPrefab : doorwayPrefab;
+        }
+        return GetDoorwayPrefab();
     }
 
     public string GetGridLayoutAsString()
     {
         System.Text.StringBuilder sb = new System.Text.StringBuilder();
+        sb.AppendLine("=== LAYER 0 LAYOUT ===");
         for (int z = height - 1; z >= 0; z--)
         {
             for (int x = 0; x < width; x++)
             {
                 if (grid == null) return "Grid is null";
-                if (grid[x, z] == CellType.Room) sb.Append("R");
-                else if (grid[x, z] == CellType.Corridor) sb.Append("C");
+                if (grid[x, 0, z].type == CellType.Room) sb.Append("R");
+                else if (grid[x, 0, z].type == CellType.Corridor) sb.Append("C");
+                else if (grid[x, 0, z].type == CellType.Stairs) sb.Append("S");
                 else sb.Append(".");
             }
             sb.AppendLine();
@@ -451,20 +721,18 @@ public class GridDungeonGenerator : MonoBehaviour
     }
 }
 
-// A simple node class for pathfinding
-public class PathNode
+public class PathNode3D
 {
-    public Vector2Int Position { get; private set; }
+    public Vector3Int Position { get; private set; }
     public float GCost { get; private set; }
 
-    public PathNode(Vector2Int position, float gCost)
+    public PathNode3D(Vector3Int position, float gCost)
     {
         Position = position;
         GCost = gCost;
     }
 }
 
-// Simple Priority Queue implementation for A*
 public class PriorityQueue<T>
 {
     private List<System.Tuple<T, float>> elements = new List<System.Tuple<T, float>>();
