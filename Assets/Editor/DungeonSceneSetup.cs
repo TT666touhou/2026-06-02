@@ -167,6 +167,22 @@ public static class DungeonSceneSetup
 
         // Parent and position Main Camera
         GameObject mainCamera = GameObject.FindWithTag("MainCamera");
+        if (mainCamera == null)
+        {
+            Camera existingCam = Object.FindObjectOfType<Camera>();
+            if (existingCam != null)
+            {
+                mainCamera = existingCam.gameObject;
+                mainCamera.tag = "MainCamera";
+            }
+            else
+            {
+                mainCamera = new GameObject("Main Camera");
+                mainCamera.tag = "MainCamera";
+                mainCamera.AddComponent<Camera>();
+            }
+        }
+
         if (mainCamera != null)
         {
             mainCamera.transform.parent = playerGo.transform;
@@ -179,6 +195,11 @@ public static class DungeonSceneSetup
                 cam.backgroundColor = new Color(0.02f, 0.02f, 0.04f);
                 cam.clearFlags = CameraClearFlags.SolidColor;
                 cam.farClipPlane = 100f;
+            }
+
+            if (mainCamera.GetComponent<AudioListener>() == null)
+            {
+                mainCamera.AddComponent<AudioListener>();
             }
         }
 
