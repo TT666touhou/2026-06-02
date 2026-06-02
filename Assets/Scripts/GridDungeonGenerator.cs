@@ -67,6 +67,7 @@ public class GridDungeonGenerator : MonoBehaviour
     [Header("Staircase Prefabs")]
     public GameObject stairsPrefab;      // stairs_mp_1 or stairs_5_concrete (for Gothic)
     public GameObject bunkerStairsPrefab; // stairs_5_wood (for Bunker)
+    public float stairsRotationOffset = 180f; // Offset to align stairs model forward with rising direction
 
     [Header("Dungeon Theme & Layout Settings")]
     public DungeonTheme dungeonTheme = DungeonTheme.GothicRuins;
@@ -202,34 +203,64 @@ public class GridDungeonGenerator : MonoBehaviour
         {
             bool stairPlaced = false;
             int attempts = 0;
-            while (!stairPlaced && attempts < 300)
+            while (!stairPlaced && attempts < 500)
             {
                 attempts++;
-                // Leave room for Northward stairs run (needs z+1 buffer)
                 int sx = Random.Range(2, width - 2);
-                int sz = Random.Range(2, height - 3);
+                int sz = Random.Range(2, height - 2);
 
-                CellType lowerType = grid[sx, y, sz].type;
-                CellType upperType = grid[sx, y + 1, sz + 1].type;
-
-                // We can place stairs if the lower cell and the upper landing cell are valid
-                if ((lowerType == CellType.Room || lowerType == CellType.Corridor) &&
-                    (upperType == CellType.Room || upperType == CellType.Corridor))
+                // Shuffled rotations to evaluate all directions (North, East, South, West)
+                List<int> rotations = new List<int> { 0, 90, 180, 270 };
+                for (int i = 0; i < rotations.Count; i++)
                 {
-                    // Place stairs in (sx, y, sz) rising North
-                    grid[sx, y, sz].type = CellType.Stairs;
-                    grid[sx, y, sz].rotation = 0; // 0 degrees = North
-                    grid[sx, y, sz].hasCeiling = false; // Carve ceiling so player can stand
-
-                    // Carve the floor of the cell directly above the stairs
-                    grid[sx, y + 1, sz].hasFloor = false;
-
-                    // Ensure connection pathways on the upper layer are open
-                    if (grid[sx, y + 1, sz].type == CellType.Empty) grid[sx, y + 1, sz].type = CellType.Corridor;
-                    if (grid[sx, y + 1, sz + 1].type == CellType.Empty) grid[sx, y + 1, sz + 1].type = CellType.Corridor;
-
-                    stairPlaced = true;
+                    int temp = rotations[i];
+                    int randomIndex = Random.Range(i, rotations.Count);
+                    rotations[i] = rotations[randomIndex];
+                    rotations[randomIndex] = temp;
                 }
+
+                foreach (int rot in rotations)
+                {
+                    Vector3Int riseDir = Vector3Int.zero;
+                    Vector3Int entranceDir = Vector3Int.zero;
+                    if (rot == 0) { riseDir = new Vector3Int(0, 0, 1); entranceDir = new Vector3Int(0, 0, -1); }
+                    else if (rot == 90) { riseDir = new Vector3Int(1, 0, 0); entranceDir = new Vector3Int(-1, 0, 0); }
+                    else if (rot == 180) { riseDir = new Vector3Int(0, 0, -1); entranceDir = new Vector3Int(0, 0, 1); }
+                    else if (rot == 270) { riseDir = new Vector3Int(-1, 0, 0); entranceDir = new Vector3Int(1, 0, 0); }
+
+                    int ex = sx + entranceDir.x;
+                    int ez = sz + entranceDir.z;
+                    int lx = sx + riseDir.x;
+                    int lz = sz + riseDir.z;
+
+                    // Grid bounds checks
+                    if (ex < 1 || ex >= width - 1 || ez < 1 || ez >= height - 1 ||
+                        lx < 1 || lx >= width - 1 || lz < 1 || lz >= height - 1)
+                        continue;
+
+                    CellType stairsType = grid[sx, y, sz].type;
+                    CellType entranceType = grid[ex, y, ez].type;
+
+                    // Place stairs if the cell itself and the entrance cell are Room/Corridor
+                    if ((stairsType == CellType.Room || stairsType == CellType.Corridor) &&
+                        (entranceType == CellType.Room || entranceType == CellType.Corridor))
+                    {
+                        grid[sx, y, sz].type = CellType.Stairs;
+                        grid[sx, y, sz].rotation = rot;
+                        grid[sx, y, sz].hasCeiling = false; // Carve ceiling so player can stand
+
+                        // Carve the floor of the cell directly above the stairs
+                        grid[sx, y + 1, sz].hasFloor = false;
+
+                        // Ensure connection pathways on the upper layer are open
+                        if (grid[sx, y + 1, sz].type == CellType.Empty) grid[sx, y + 1, sz].type = CellType.Corridor;
+                        if (grid[lx, y + 1, lz].type == CellType.Empty) grid[lx, y + 1, lz].type = CellType.Corridor;
+
+                        stairPlaced = true;
+                        break;
+                    }
+                }
+                if (stairPlaced) break;
             }
         }
     }
@@ -347,7 +378,7 @@ public class GridDungeonGenerator : MonoBehaviour
             if (floorPref != null)
             {
                 GameObject floor = Instantiate(floorPref, center, Quaternion.identity, transform);
-                floor.transform.localScale = new Vector3(1.52f, 1.0f, 1.52f);
+                floor.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
                 generatedObjects.Add(floor);
             }
         }
@@ -359,7 +390,7 @@ public class GridDungeonGenerator : MonoBehaviour
             if (ceilingPref != null)
             {
                 GameObject ceiling = Instantiate(ceilingPref, center + new Vector3(0, cellHeight, 0), Quaternion.Euler(180, 0, 0), transform);
-                ceiling.transform.localScale = new Vector3(1.52f, 1.0f, 1.52f);
+                ceiling.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
                 generatedObjects.Add(ceiling);
             }
         }
@@ -410,7 +441,7 @@ public class GridDungeonGenerator : MonoBehaviour
                     if (wallPref != null)
                     {
                         GameObject wall = Instantiate(wallPref, center + offset, rotation, transform);
-                        wall.transform.localScale = new Vector3(1.52f, 1.0f, 1.52f);
+                        wall.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
                         generatedObjects.Add(wall);
                     }
                     return;
@@ -423,11 +454,11 @@ public class GridDungeonGenerator : MonoBehaviour
                 GameObject doorway = Instantiate(doorwayPref, center + offset, rotation, transform);
                 if (doorwayPref.name.ToLower().Contains("arc"))
                 {
-                    doorway.transform.localScale = new Vector3(2.02f, 1.0f, 1.52f);
+                    doorway.transform.localScale = new Vector3(2.12f, 1.0f, 1.56f);
                 }
                 else
                 {
-                    doorway.transform.localScale = new Vector3(1.52f, 1.0f, 1.52f);
+                    doorway.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
                 }
                 if (doorwayPref.name.Contains("doorway") || doorwayPref.name.Contains("arc"))
                 {
@@ -447,7 +478,7 @@ public class GridDungeonGenerator : MonoBehaviour
             if (wallPref != null)
             {
                 GameObject wall = Instantiate(wallPref, center + offset, rotation, transform);
-                wall.transform.localScale = new Vector3(1.52f, 1.0f, 1.52f);
+                wall.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
                 generatedObjects.Add(wall);
             }
         }
@@ -464,7 +495,7 @@ public class GridDungeonGenerator : MonoBehaviour
             if (floorPref != null)
             {
                 GameObject floor = Instantiate(floorPref, center, Quaternion.identity, transform);
-                floor.transform.localScale = new Vector3(1.52f, 1.0f, 1.52f);
+                floor.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
                 generatedObjects.Add(floor);
             }
         }
@@ -476,7 +507,7 @@ public class GridDungeonGenerator : MonoBehaviour
             if (ceilingPref != null)
             {
                 GameObject ceiling = Instantiate(ceilingPref, center + new Vector3(0, cellHeight, 0), Quaternion.Euler(180, 0, 0), transform);
-                ceiling.transform.localScale = new Vector3(1.52f, 1.0f, 1.52f);
+                ceiling.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
                 generatedObjects.Add(ceiling);
             }
         }
@@ -517,7 +548,7 @@ public class GridDungeonGenerator : MonoBehaviour
             if (wallPref != null)
             {
                 GameObject wall = Instantiate(wallPref, center + offset, rotation, transform);
-                wall.transform.localScale = new Vector3(1.52f, 1.0f, 1.52f);
+                wall.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
                 generatedObjects.Add(wall);
             }
         }
@@ -537,7 +568,7 @@ public class GridDungeonGenerator : MonoBehaviour
                     if (wallPref != null)
                     {
                         GameObject wall = Instantiate(wallPref, center + offset, rotation, transform);
-                        wall.transform.localScale = new Vector3(1.52f, 1.0f, 1.52f);
+                        wall.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
                         generatedObjects.Add(wall);
                     }
                     return;
@@ -553,11 +584,11 @@ public class GridDungeonGenerator : MonoBehaviour
                     GameObject doorway = Instantiate(doorwayPref, center + offset, rotation, transform);
                     if (doorwayPref.name.ToLower().Contains("arc"))
                     {
-                        doorway.transform.localScale = new Vector3(2.02f, 1.0f, 1.52f);
+                        doorway.transform.localScale = new Vector3(2.12f, 1.0f, 1.56f);
                     }
                     else
                     {
-                        doorway.transform.localScale = new Vector3(1.52f, 1.0f, 1.52f);
+                        doorway.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
                     }
                     if (doorwayPref.name.Contains("doorway") || doorwayPref.name.Contains("arc"))
                     {
@@ -634,9 +665,15 @@ public class GridDungeonGenerator : MonoBehaviour
         // 1. Spawn Stairs Prefab
         if (activeStairsPrefab != null)
         {
-            GameObject stairsInstance = Instantiate(activeStairsPrefab, center, stairsRot, transform);
-            float widthScale = activeStairsPrefab.name.ToLower().Contains("stairs_5") ? 3.0f : 1.5f;
-            stairsInstance.transform.localScale = new Vector3(widthScale, 1.0f, 1.0f);
+            // Apply stairsModelRotationOffset to match the physical model to layout rise direction
+            Quaternion stairsInstanceRot = stairsRot * Quaternion.Euler(0, stairsRotationOffset, 0);
+            GameObject stairsInstance = Instantiate(activeStairsPrefab, center, stairsInstanceRot, transform);
+            
+            // Scale dynamically: width matches cell width, length scaled to span full cell size (6.0m)
+            float widthScale = activeStairsPrefab.name.ToLower().Contains("stairs_5") ? (cellSize / 2.0f) : 1.5f;
+            float lengthScale = activeStairsPrefab.name.ToLower().Contains("stairs_5") ? (cellSize / 4.077f) : 1.5f;
+            
+            stairsInstance.transform.localScale = new Vector3(widthScale, 1.0f, lengthScale);
             generatedObjects.Add(stairsInstance);
         }
 
@@ -647,7 +684,7 @@ public class GridDungeonGenerator : MonoBehaviour
             if (floorPref != null)
             {
                 GameObject floor = Instantiate(floorPref, center, Quaternion.identity, transform);
-                floor.transform.localScale = new Vector3(1.52f, 1.0f, 1.52f);
+                floor.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
                 generatedObjects.Add(floor);
             }
         }
@@ -657,7 +694,7 @@ public class GridDungeonGenerator : MonoBehaviour
         if (ceilingPref != null)
         {
             GameObject ceiling = Instantiate(ceilingPref, center + new Vector3(0, cellHeight * 2.0f, 0), Quaternion.Euler(180, 0, 0), transform);
-            ceiling.transform.localScale = new Vector3(1.52f, 1.0f, 1.52f);
+            ceiling.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
             generatedObjects.Add(ceiling);
         }
 
@@ -667,32 +704,32 @@ public class GridDungeonGenerator : MonoBehaviour
         {
             // East wall (Y = y)
             GameObject wallE = Instantiate(wallPref, center + sideDir * (cellSize * 0.5f), Quaternion.Euler(0, rotY - 90f, 0), transform);
-            wallE.transform.localScale = new Vector3(1.52f, 1.0f, 1.52f);
+            wallE.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
             generatedObjects.Add(wallE);
 
             // West wall (Y = y)
             GameObject wallW = Instantiate(wallPref, center - sideDir * (cellSize * 0.5f), Quaternion.Euler(0, rotY + 90f, 0), transform);
-            wallW.transform.localScale = new Vector3(1.52f, 1.0f, 1.52f);
+            wallW.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
             generatedObjects.Add(wallW);
 
             // East upper wall (Y = y+1)
             GameObject wallE_up = Instantiate(wallPref, center + sideDir * (cellSize * 0.5f) + new Vector3(0, cellHeight, 0), Quaternion.Euler(0, rotY - 90f, 0), transform);
-            wallE_up.transform.localScale = new Vector3(1.52f, 1.0f, 1.52f);
+            wallE_up.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
             generatedObjects.Add(wallE_up);
 
             // West upper wall (Y = y+1)
             GameObject wallW_up = Instantiate(wallPref, center - sideDir * (cellSize * 0.5f) + new Vector3(0, cellHeight, 0), Quaternion.Euler(0, rotY + 90f, 0), transform);
-            wallW_up.transform.localScale = new Vector3(1.52f, 1.0f, 1.52f);
+            wallW_up.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
             generatedObjects.Add(wallW_up);
 
             // North wall (Y = y) - under the high end of the stairs
             GameObject wallN = Instantiate(wallPref, center + riseDir * (cellSize * 0.5f), Quaternion.Euler(0, rotY + 180f, 0), transform);
-            wallN.transform.localScale = new Vector3(1.52f, 1.0f, 1.52f);
+            wallN.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
             generatedObjects.Add(wallN);
 
             // South wall (Y = y+1) - behind the low end of the stairs on the upper layer
             GameObject wallS_up = Instantiate(wallPref, center - riseDir * (cellSize * 0.5f) + new Vector3(0, cellHeight, 0), Quaternion.Euler(0, rotY, 0), transform);
-            wallS_up.transform.localScale = new Vector3(1.52f, 1.0f, 1.52f);
+            wallS_up.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
             generatedObjects.Add(wallS_up);
         }
     }
