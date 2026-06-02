@@ -89,7 +89,7 @@ public static class DungeonSceneSetup
         generator.maxRoomSize = 3;
         generator.seed = 1337;
         generator.dungeonTheme = GridDungeonGenerator.DungeonTheme.Mixed; // Mixed theme (even Y = Gothic, odd Y = Bunker)
-        generator.corridorStyle = GridDungeonGenerator.CorridorStyle.Mixed;
+        generator.corridorStyle = GridDungeonGenerator.CorridorStyle.SquareCorridor;
 
         // 5. Generate the dungeon
         generator.GenerateDungeon();
