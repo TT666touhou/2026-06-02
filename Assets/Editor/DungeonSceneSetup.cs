@@ -69,12 +69,15 @@ public static class DungeonSceneSetup
         generator.gothicDoorwayPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(gothicPath + "arc_1_wall_1_plain.prefab");
         generator.stairsPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(gothicPath + "stairs_5_concrete.prefab"); // Concrete straight stairs
         generator.bunkerStairsPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(gothicPath + "stairs_5_wood.prefab"); // Wooden straight stairs
+        generator.pillarPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(gothicPath + "pillar_1.prefab"); // Gothic ruins pillar
+        generator.bunkerPillarPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(basePath + "pillar_11.prefab"); // Bunker pillar
 
         if (generator.floorPrefab == null || generator.wallPrefab == null || generator.ceilingPrefab == null || 
             generator.doorwayPrefab == null || generator.tunnelStraight == null || generator.tunnelCorner == null || 
             generator.tunnelTJunction == null || generator.tunnelXJunction == null ||
             generator.gothicFloorPrefab == null || generator.gothicWallPrefab == null || generator.gothicCeilingPrefab == null ||
-            generator.gothicDoorwayPrefab == null || generator.stairsPrefab == null || generator.bunkerStairsPrefab == null)
+            generator.gothicDoorwayPrefab == null || generator.stairsPrefab == null || generator.bunkerStairsPrefab == null ||
+            generator.pillarPrefab == null || generator.bunkerPillarPrefab == null)
         {
             Debug.LogError("Failed to load some hybrid/Gothic dungeon prefabs! Please check paths under Assets/Prefabs/PSX Bunkers v1.8.8/ and Assets/Prefabs/PSX Mega Pack 3.1.3/");
             return;
