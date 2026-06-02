@@ -1,0 +1,36 @@
+{
+    "files.exclude": {
+        "**/.git": true,
+        "**/.DS_Store": true,
+        "**/Library/": true,
+        "**/Temp/": true,
+        "**/Obj/": true,
+        "**/Logs/": true,
+        "**/UserSettings/": true,
+        "**/*.booproj": true,
+        "**/*.pidb": true,
+        "**/*.suo": true,
+        "**/*.user": true,
+        "**/*.userprefs": true,
+        "**/*.unityproj": true,
+        "**/*.dll": true,
+        "**/*.pdb": true,
+        "**/*.mdb": true,
+        "**/*.meta": true
+    },
+    "files.watcherExclude": {
+        "**/Library/**": true,
+        "**/Temp/**": true,
+        "**/Obj/**": true,
+        "**/Logs/**": true,
+        "**/UserSettings/**": true
+    },
+    "search.exclude": {
+        "**/Library/": true,
+        "**/Temp/": true,
+        "**/Obj/": true,
+        "**/Logs/": true,
+        "**/UserSettings/": true
+    },
+    "dotnet.server.useOmnisharp": false
+}
