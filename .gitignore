@@ -1,0 +1,56 @@
+/[L|l]ibrary/
+/[T|t]emp/
+/[O|o]bj/
+/[B|b]uild/
+/[B|b]uilds/
+/[L|l]ogs/
+/[U|u]ser[S|s]ettings/
+
+# MemoryCaptures can get large and should not be tracked
+/[M|m]emory[C|c]aptures/
+
+# Asset server cache
+/[A|a]sset[S|s]erver[C|c]ache/
+
+# Crash reports
+/Crash[R|r]eports/
+
+# Exported iOs Project
+/iOS/
+
+# Avoid tracking user-specific configurations and logs
+.vs/
+.vsconfig
+*.csproj
+*.unityproj
+*.sln
+*.suo
+*.tmp
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.opendb
+*.VC.db
+
+# Unity3D generated meta files
+*.pidb.meta
+*.pdb.meta
+*.mdb.meta
+
+# Unity3D Generated File Groups
+sysinfo.txt
+
+# Builds
+*.apk
+*.unitypackage
+*.app
+
+# Crashlytics generated file
+crashlytics-build.properties
+
+# OS generated files
+.DS_Store
+Thumbs.db
