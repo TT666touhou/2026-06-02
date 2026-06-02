@@ -9,6 +9,16 @@ public static class DungeonSceneSetup
     [MenuItem("Tools/Auto Setup Test Scene")]
     public static void SetupScene()
     {
+        if (EditorApplication.isPlaying)
+        {
+            Debug.LogError("Cannot run Auto Setup during Play Mode! Please exit Play Mode and run this tool again.");
+            if (!Application.isBatchMode)
+            {
+                EditorUtility.DisplayDialog("Play Mode Active", "Please exit Play Mode before running the Auto Setup tool!", "OK");
+            }
+            return;
+        }
+
         // 1. Create or Open Scene
         string scenePath = "Assets/Scenes/DungeonTest.unity";
         Scene scene;
