@@ -1,0 +1,16 @@
+=== PREFAB STRUCTURE: doorway_2_plain ===
+- Name: doorway_2_plain
+  Pos : 0.000, 0.000, 0.000
+  Rot : 0.000, 0.000, 0.000
+  Scale: 1.000, 1.000, 1.000
+  MeshBounds: Center=(0.00, 1.50, 0.00), Size=(4.06, 3.00, 0.14)
+  - Name: door_7
+    Pos : -0.491, 0.000, -0.039
+    Rot : 0.000, 0.000, 0.000
+    Scale: 1.000, 1.000, 1.000
+    MeshBounds: Center=(0.49, 1.06, 0.04), Size=(1.01, 2.07, 0.09)
+    - Name: door_handle_2
+      Pos : 0.941, 1.047, 0.086
+      Rot : 0.000, 0.000, 0.000
+      Scale: 1.000, 1.000, 1.000
+      MeshBounds: Center=(-0.05, 0.00, -0.05), Size=(0.13, 0.03, 0.19)
