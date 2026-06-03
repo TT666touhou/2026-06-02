@@ -395,20 +395,42 @@ public class GridDungeonGenerator : MonoBehaviour
         }
         else if (r.theme == "CastleHall")
         {
-            // Y=1 side balconies
+            // Y=1 side balconies (Balcony on x == r.x and x == r.x + 2)
+            // But we must open a hole for Stair 1 at (r.x, 1, r.z)
             for (int x = r.x; x < r.x + r.w; x++)
             {
                 for (int z = r.z; z < r.z + r.h; z++)
                 {
-                    grid[x, r.y + 1, z].hasFloor = (x == r.x || x == r.x + 2);
+                    if (x == r.x)
+                    {
+                        // Stair 1 rises from (r.x, 0, r.z) to (r.x, 1, r.z + 1)
+                        // So (r.x, 1, r.z) must be false (hole for stairs)
+                        grid[x, r.y + 1, z].hasFloor = (z != r.z);
+                    }
+                    else if (x == r.x + 2)
+                    {
+                        // Stair 2 rises starting from Y=1, so floor is fully kept at Y=1
+                        grid[x, r.y + 1, z].hasFloor = true;
+                    }
+                    else
+                    {
+                        grid[x, r.y + 1, z].hasFloor = false;
+                    }
                 }
             }
-            // Y=2 high back bridge
+            // Y=2 high back bridge (Bridge at z == r.z + 1, but we must open a hole for Stair 2 at (r.x + 2, 2, r.z + 2))
             for (int x = r.x; x < r.x + r.w; x++)
             {
                 for (int z = r.z; z < r.z + r.h; z++)
                 {
-                    grid[x, r.y + 2, z].hasFloor = (z == r.z + 2);
+                    if (x == r.x + 2)
+                    {
+                        grid[x, r.y + 2, z].hasFloor = (z == r.z + 1);
+                    }
+                    else
+                    {
+                        grid[x, r.y + 2, z].hasFloor = (z == r.z + 1 || z == r.z + 2);
+                    }
                 }
             }
         }
@@ -425,12 +447,13 @@ public class GridDungeonGenerator : MonoBehaviour
         }
         else if (r.theme == "LivingQuarters")
         {
-            // Y=1 living area has full wood floor
+            // Y=1 living area has wood floor, but Stair 1 rises from (r.x, 0, r.z) to (r.x, 1, r.z + 1)
+            // So (r.x, 1, r.z) must be false to prevent blocking the stairs.
             for (int x = r.x; x < r.x + r.w; x++)
             {
                 for (int z = r.z; z < r.z + r.h; z++)
                 {
-                    grid[x, r.y + 1, z].hasFloor = true;
+                    grid[x, r.y + 1, z].hasFloor = !(x == r.x && z == r.z);
                 }
             }
         }
@@ -979,7 +1002,15 @@ public class GridDungeonGenerator : MonoBehaviour
 
     private void DecorateGuardPost(Room r)
     {
-        // 1. Staircase Y=0 -> Y=1
+        // 1. Scaffold Frame Support
+        GameObject scaffold = LoadPrefab("scaffold_frame_large");
+        if (scaffold != null)
+        {
+            // Place it centered under the Y=1 platform (which is at z == r.z + 1)
+            InstantiateDecor(scaffold, new Vector3((r.x + 0.5f) * cellSize, r.y * cellHeight, (r.z + 1.0f) * cellSize), 0f);
+        }
+
+        // 2. Staircase Y=0 -> Y=1
         GameObject stairs = LoadPrefab("stairs_narrow");
         if (stairs != null)
         {
@@ -992,7 +1023,7 @@ public class GridDungeonGenerator : MonoBehaviour
             grid[r.x, r.y, r.z].rotation = 0;
         }
 
-        // 2. Raised Platform (Y=1) barrier railings and ending columns
+        // 3. Raised Platform (Y=1) barrier railings and ending columns
         GameObject barrier = LoadPrefab("barrier");
         GameObject column = LoadPrefab("column");
         if (barrier != null)
@@ -1097,11 +1128,14 @@ public class GridDungeonGenerator : MonoBehaviour
         GameObject stairsWood = LoadPrefab("stairs_wood");
         if (stairsWood != null)
         {
-            InstantiateDecor(stairsWood, new Vector3((r.x + 1) * cellSize, r.y * cellHeight, r.z * cellSize), 0f);
+            // Put the stair in the channel x = r.x, climbing East (90 degrees) onto the platform x = r.x + 1
+            // Centered on Z to match bridge alignment
+            Vector3 stairsPos = new Vector3(r.x * cellSize + 0.5f, r.y * cellHeight, r.z * cellSize + 2.0f);
+            InstantiateDecor(stairsWood, stairsPos, 90f);
             
             // Mark cell type as Stairs for physical wall and hole inspection
-            grid[r.x + 1, r.y, r.z].type = CellType.Stairs;
-            grid[r.x + 1, r.y, r.z].rotation = 0;
+            grid[r.x, r.y, r.z + 1].type = CellType.Stairs;
+            grid[r.x, r.y, r.z + 1].rotation = 90;
         }
 
         // 4. Bridge railings (with start/middle/end columns)
@@ -1216,7 +1250,15 @@ public class GridDungeonGenerator : MonoBehaviour
 
     private void DecorateLivingQuarters(Room r)
     {
-        // 1. Spawns wood stairs Y=0 -> Y=1
+        // 1. Scaffold Frame Support
+        GameObject scaffold = LoadPrefab("scaffold_frame_large");
+        if (scaffold != null)
+        {
+            // Place large scaffold at the center of the 2x2 room
+            InstantiateDecor(scaffold, new Vector3((r.x + 0.5f) * cellSize, r.y * cellHeight, (r.z + 0.5f) * cellSize), 0f);
+        }
+
+        // 2. Spawns wood stairs Y=0 -> Y=1
         GameObject stairsWood = LoadPrefab("stairs_wood");
         if (stairsWood != null)
         {
@@ -1227,14 +1269,20 @@ public class GridDungeonGenerator : MonoBehaviour
             grid[r.x, r.y, r.z].rotation = 0;
         }
 
-        // 2. Layer 0: Dining Mess Hall (table with tablecloth + benches)
+        // 3. Layer 0: Dining Mess Hall (table with tablecloth + benches)
         GameObject tableCloth = LoadPrefab("table_long_tablecloth");
         GameObject bench = LoadPrefab("bench");
-        if (tableCloth != null) InstantiateDecor(tableCloth, new Vector3((r.x + 1) * cellSize, r.y * cellHeight, (r.z + 1) * cellSize), 90f);
-        if (bench != null)
+        if (tableCloth != null)
         {
-            InstantiateDecor(bench, new Vector3((r.x + 1) * cellSize - 0.8f, r.y * cellHeight, (r.z + 1) * cellSize), 90f);
-            InstantiateDecor(bench, new Vector3((r.x + 1) * cellSize + 0.8f, r.y * cellHeight, (r.z + 1) * cellSize), 90f);
+            // Shift table away from the exit door (which is at r.x + 1, r.z + 1)
+            // Shift it South-West to (r.x + 0.8, r.z + 0.8)
+            Vector3 tablePos = new Vector3((r.x + 0.8f) * cellSize, r.y * cellHeight, (r.z + 0.8f) * cellSize);
+            InstantiateDecor(tableCloth, tablePos, 90f);
+            if (bench != null)
+            {
+                InstantiateDecor(bench, tablePos + new Vector3(-0.8f, 0, 0), 90f);
+                InstantiateDecor(bench, tablePos + new Vector3(0.8f, 0, 0), 90f);
+            }
         }
 
         // 3. Layer 1: Living/Sleeping quarters
@@ -1284,9 +1332,111 @@ public class GridDungeonGenerator : MonoBehaviour
     private void InstantiateDecor(GameObject prefab, Vector3 pos, float rotationY)
     {
         if (prefab == null) return;
+
+        // Apply filters to prevent obstructing doors or stairs
+        if (IsPositionObstructingDoor(pos, prefab.name))
+        {
+            return;
+        }
+
+        if (IsPositionObstructingStairs(pos, prefab.name))
+        {
+            return;
+        }
+
         GameObject instance = Instantiate(prefab, pos, Quaternion.Euler(0, rotationY, 0), transform);
         instance.transform.localScale = Vector3.one;
         generatedObjects.Add(instance);
+    }
+
+    private bool IsPositionObstructingDoor(Vector3 pos, string prefabName)
+    {
+        string lowerName = prefabName.ToLower();
+        if (lowerName.Contains("torch") || lowerName.Contains("banner") || lowerName.Contains("shield") || lowerName.Contains("weed") || lowerName.Contains("candle") || lowerName.Contains("scaffold"))
+        {
+            return false;
+        }
+
+        foreach (var r in rooms)
+        {
+            if (r.entrancePoints.Count > 0)
+            {
+                Vector3Int ent = r.entrancePoints[0];
+                Vector3 entPos = new Vector3(ent.x * cellSize, ent.y * cellHeight, ent.z * cellSize);
+                if (Mathf.Abs(pos.y - entPos.y) < 1.0f)
+                {
+                    float dist = Vector2.Distance(new Vector2(pos.x, pos.z), new Vector2(entPos.x, entPos.z));
+                    if (dist < 1.8f)
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            if (r.exitPoints.Count > 0)
+            {
+                Vector3Int ex = r.exitPoints[0];
+                Vector3 exPos = new Vector3(ex.x * cellSize, ex.y * cellHeight, ex.z * cellSize);
+                if (Mathf.Abs(pos.y - exPos.y) < 1.0f)
+                {
+                    float dist = Vector2.Distance(new Vector2(pos.x, pos.z), new Vector2(exPos.x, exPos.z));
+                    if (dist < 1.8f)
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    private bool IsPositionObstructingStairs(Vector3 pos, string prefabName)
+    {
+        string lowerName = prefabName.ToLower();
+        bool isFence = lowerName.Contains("barrier") || lowerName.Contains("bar_");
+        if (!isFence)
+        {
+            return false;
+        }
+
+        for (int x = 0; x < width; x++)
+        {
+            for (int y = 0; y < layers; y++)
+            {
+                for (int z = 0; z < height; z++)
+                {
+                    if (grid[x, y, z].type == CellType.Stairs)
+                    {
+                        float rotY = grid[x, y, z].rotation;
+                        Quaternion stairsRot = Quaternion.Euler(0, rotY, 0);
+                        Vector3Int riseDir = Vector3Int.RoundToInt(stairsRot * Vector3.forward);
+
+                        Vector3Int upperExit = new Vector3Int(x + riseDir.x, y + 1, z + riseDir.z);
+                        Vector3 upperPos = new Vector3(upperExit.x * cellSize, upperExit.y * cellHeight, upperExit.z * cellSize);
+                        if (Mathf.Abs(pos.y - upperPos.y) < 1.0f)
+                        {
+                            float dist = Vector2.Distance(new Vector2(pos.x, pos.z), new Vector2(upperPos.x, upperPos.z));
+                            if (dist < 2.2f)
+                            {
+                                return true;
+                            }
+                        }
+
+                        Vector3Int lowerEntrance = new Vector3Int(x - riseDir.x, y, z - riseDir.z);
+                        Vector3 lowerPos = new Vector3(lowerEntrance.x * cellSize, lowerEntrance.y * cellHeight, lowerEntrance.z * cellSize);
+                        if (Mathf.Abs(pos.y - lowerPos.y) < 1.0f)
+                        {
+                            float dist = Vector2.Distance(new Vector2(pos.x, pos.z), new Vector2(lowerPos.x, lowerPos.z));
+                            if (dist < 2.2f)
+                            {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return false;
     }
 #endif
 
