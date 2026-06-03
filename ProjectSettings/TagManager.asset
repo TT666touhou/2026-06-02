@@ -3,7 +3,12 @@
 --- !u!78 &1
 TagManager:
   serializedVersion: 2
-  tags: []
+  tags:
+  - Chest
+  - Mimic
+  - Interactable
+  - Loot
+  - Light
   layers:
   - Default
   - TransparentFX
@@ -13,11 +18,11 @@ TagManager:
   - UI
   - 
   - 
-  - 
-  - 
-  - 
-  - 
-  - 
+  - Environment
+  - Furniture
+  - Props
+  - Interactable
+  - Decoration
   - 
   - 
   - 

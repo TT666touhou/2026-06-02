@@ -7,6 +7,51 @@ using System.Collections.Generic;
 
 public static class DungeonSceneSetup
 {
+    [MenuItem("Tools/Set Grid Snap (1, 1, 1)")]
+    public static void SetGridSnap()
+    {
+        EditorSnapSettings.gridSnapEnabled = true;
+        EditorSnapSettings.gridSize = new Vector3(1f, 1f, 1f);
+        EditorSnapSettings.move = new Vector3(1f, 1f, 1f);
+        
+        // Automatically make the SceneView grid visible
+        if (SceneView.lastActiveSceneView != null)
+        {
+            SceneView.lastActiveSceneView.showGrid = true;
+            SceneView.lastActiveSceneView.Repaint();
+        }
+        
+        Debug.Log("Grid Snapping has been enabled, Move snapping increments have been set to (1, 1, 1), and grid visibility has been turned ON!");
+    }
+
+    [MenuItem("Tools/Create Empty Manual Scene")]
+    public static void CreateEmptyManualScene()
+    {
+        if (EditorApplication.isPlaying)
+        {
+            Debug.LogError("Cannot create scene during Play Mode!");
+            return;
+        }
+
+        string scenePath = "Assets/Scenes/DungeonManualSetup.unity";
+        if (!Directory.Exists("Assets/Scenes"))
+        {
+            Directory.CreateDirectory("Assets/Scenes");
+        }
+
+        Scene scene = EditorSceneManager.NewScene(NewSceneSetup.DefaultGameObjects, NewSceneMode.Single);
+        EditorSceneManager.SaveScene(scene, scenePath);
+        
+        // Auto-enable grid settings and visibility for the new scene
+        SetGridSnap();
+        
+        Debug.Log($"Empty scene created and saved to {scenePath}. Open it to start manual setup!");
+        if (!Application.isBatchMode)
+        {
+            EditorUtility.DisplayDialog("Success", $"Successfully created and opened empty scene at: {scenePath}\n\nGrid snap and visibility have been automatically enabled!", "OK");
+        }
+    }
+
     [MenuItem("Tools/Auto Setup Test Scene")]
     public static void SetupScene()
     {
@@ -51,49 +96,50 @@ public static class DungeonSceneSetup
         GameObject genGo = new GameObject("DungeonGenerator");
         GridDungeonGenerator generator = genGo.AddComponent<GridDungeonGenerator>();
 
-        // 4. Find and assign structural prefabs
-        string basePath = "Assets/Prefabs/PSX Bunkers v1.8.8/";
-        generator.floorPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(basePath + "floor_1.prefab");
-        generator.wallPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(basePath + "wall_1_plain.prefab");
-        generator.ceilingPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(basePath + "floor_1.prefab");
-        generator.doorwayPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(basePath + "doorway_2_plain.prefab");
+        // 4. Find and assign structural prefabs from KayKit Dungeon
+        string kaykitPath = "Assets/Prefabs/KayKit Dungeon/";
+        generator.floorPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(kaykitPath + "floor_tile_large.prefab");
+        generator.wallPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(kaykitPath + "wall.prefab");
+        generator.ceilingPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(kaykitPath + "ceiling_tile.prefab");
+        generator.doorwayPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(kaykitPath + "wall_doorway.prefab");
 
-        generator.tunnelStraight = AssetDatabase.LoadAssetAtPath<GameObject>(basePath + "tunnel_straight.prefab");
-        generator.tunnelCorner = AssetDatabase.LoadAssetAtPath<GameObject>(basePath + "tunnel_ancle.prefab");
-        generator.tunnelTJunction = AssetDatabase.LoadAssetAtPath<GameObject>(basePath + "tunnel_junction_three_way.prefab");
-        generator.tunnelXJunction = AssetDatabase.LoadAssetAtPath<GameObject>(basePath + "tunnel_junction_four_way.prefab");
+        generator.tunnelStraight = null;
+        generator.tunnelCorner = null;
+        generator.tunnelTJunction = null;
+        generator.tunnelXJunction = null;
 
-        string gothicPath = "Assets/Prefabs/PSX Mega Pack 3.1.3/";
-        generator.gothicFloorPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(gothicPath + "floor_ceiling_1.prefab");
-        generator.gothicWallPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(gothicPath + "wall_1_plain.prefab");
-        generator.gothicCeilingPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(gothicPath + "floor_ceiling_1.prefab");
-        generator.gothicDoorwayPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(gothicPath + "arc_1_wall_1_plain.prefab");
-        generator.stairsPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(gothicPath + "stairs_5_concrete.prefab"); // Concrete straight stairs
-        generator.bunkerStairsPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(gothicPath + "stairs_5_wood.prefab"); // Wooden straight stairs
-        generator.pillarPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(gothicPath + "pillar_1.prefab"); // Gothic ruins pillar
-        generator.bunkerPillarPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(basePath + "pillar_11.prefab"); // Bunker pillar
+        // Assign KayKit prefabs to both Gothic and Bunker slots to ensure consistent look
+        generator.gothicFloorPrefab = generator.floorPrefab;
+        generator.gothicWallPrefab = generator.wallPrefab;
+        generator.gothicCeilingPrefab = generator.ceilingPrefab;
+        generator.gothicDoorwayPrefab = generator.doorwayPrefab;
+        
+        generator.stairsPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(kaykitPath + "stairs_walled.prefab");
+        generator.bunkerStairsPrefab = generator.stairsPrefab;
+        generator.pillarPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(kaykitPath + "wall_pillar.prefab");
+        generator.bunkerPillarPrefab = generator.pillarPrefab;
 
         if (generator.floorPrefab == null || generator.wallPrefab == null || generator.ceilingPrefab == null || 
-            generator.doorwayPrefab == null || generator.tunnelStraight == null || generator.tunnelCorner == null || 
-            generator.tunnelTJunction == null || generator.tunnelXJunction == null ||
-            generator.gothicFloorPrefab == null || generator.gothicWallPrefab == null || generator.gothicCeilingPrefab == null ||
-            generator.gothicDoorwayPrefab == null || generator.stairsPrefab == null || generator.bunkerStairsPrefab == null ||
+            generator.doorwayPrefab == null || generator.gothicFloorPrefab == null || generator.gothicWallPrefab == null || 
+            generator.gothicCeilingPrefab == null || generator.gothicDoorwayPrefab == null || 
+            generator.stairsPrefab == null || generator.bunkerStairsPrefab == null ||
             generator.pillarPrefab == null || generator.bunkerPillarPrefab == null)
         {
-            Debug.LogError("Failed to load some hybrid/Gothic dungeon prefabs! Please check paths under Assets/Prefabs/PSX Bunkers v1.8.8/ and Assets/Prefabs/PSX Mega Pack 3.1.3/");
+            Debug.LogError("Failed to load some KayKit Dungeon prefabs! Please make sure you have run the prefab generator tool under Tools -> Generate KayKit Prefabs.");
             return;
         }
 
         generator.width = 12;
         generator.height = 12;
         generator.layers = 2; // 2 layers for staircase verticality
-        generator.cellSize = 6.0f;
-        generator.cellHeight = 3.0f;
+        generator.cellSize = 4.0f; // KayKit modular grid size is 4.0m
+        generator.cellHeight = 4.0f; // KayKit walls are 4.0m high
+        generator.prefabScale = Vector3.one; // No scaling needed for native 4m grid!
         generator.roomsPerLayer = 3;
         generator.minRoomSize = 2;
         generator.maxRoomSize = 3;
-        generator.seed = 1337;
-        generator.dungeonTheme = GridDungeonGenerator.DungeonTheme.Mixed; // Mixed theme (even Y = Gothic, odd Y = Bunker)
+        generator.useRandomSeed = true;
+        generator.dungeonTheme = GridDungeonGenerator.DungeonTheme.Mixed; // Mixed theme uses same prefabs now
         generator.corridorStyle = GridDungeonGenerator.CorridorStyle.SquareCorridor;
 
         // 5. Generate the dungeon
@@ -143,15 +189,49 @@ public static class DungeonSceneSetup
         float centerZ = (generator.height * generator.cellSize) * 0.5f;
 
         // 7. Find first Room floor to spawn the Player
-        Vector3 playerSpawnPos = new Vector3(centerX, 0.5f, centerZ); // fallback
-        if (generator.transform.childCount > 0)
+        Vector3 playerSpawnPos = new Vector3(centerX, 1.0f, centerZ); // fallback
+        bool spawnedAtRoomCenter = false;
+        
+        var roomsField = typeof(GridDungeonGenerator).GetField("rooms", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        if (roomsField != null)
+        {
+            var roomsList = (System.Collections.IList)roomsField.GetValue(generator);
+            if (roomsList != null && roomsList.Count > 0)
+            {
+                var startingRoom = roomsList[0];
+                var xField = startingRoom.GetType().GetField("x");
+                var yField = startingRoom.GetType().GetField("y");
+                var zField = startingRoom.GetType().GetField("z");
+                
+                if (xField != null && yField != null && zField != null)
+                {
+                    int rx = (int)xField.GetValue(startingRoom);
+                    int ry = (int)yField.GetValue(startingRoom);
+                    int rz = (int)zField.GetValue(startingRoom);
+                    
+                    float cellSize = generator.cellSize;
+                    float cellHeight = generator.cellHeight;
+                    
+                    // Spawn in DividingHall's north-middle cell (rx + 1, ry, rz + 2) which is completely clear of decorations
+                    playerSpawnPos = new Vector3(
+                        (rx + 1) * cellSize,
+                        ry * cellHeight + 1.0f,
+                        (rz + 2) * cellSize
+                    );
+                    spawnedAtRoomCenter = true;
+                    Debug.Log($"[DungeonSceneSetup] Spawned Player at safe DividingHall cell: {playerSpawnPos}");
+                }
+            }
+        }
+
+        if (!spawnedAtRoomCenter && generator.transform.childCount > 0)
         {
             for (int i = 0; i < generator.transform.childCount; i++)
             {
                 Transform child = generator.transform.GetChild(i);
-                if (child.name.Contains("floor"))
+                if (child.name.Contains("floor") && !child.name.Contains("foundation"))
                 {
-                    playerSpawnPos = child.position + new Vector3(0, 0.5f, 0); // spawn slightly above floor
+                    playerSpawnPos = child.position + new Vector3(0, 1.0f, 0); // spawn slightly higher
                     break;
                 }
             }
@@ -177,7 +257,7 @@ public static class DungeonSceneSetup
         CharacterController charController = playerGo.AddComponent<CharacterController>();
         charController.center = new Vector3(0, 0.9f, 0);
         charController.height = 1.8f;
-        charController.radius = 0.35f;
+        charController.radius = 0.25f;
         charController.slopeLimit = 45f;
         charController.stepOffset = 0.3f;
 
@@ -327,6 +407,54 @@ public static class DungeonSceneSetup
 
 public static class DungeonSceneInspector
 {
+    private static void CreateErrorMarker(GameObject root, Vector3 position, string name, Color color, Vector3 size)
+    {
+        GameObject marker = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        marker.name = name;
+        marker.transform.parent = root.transform;
+        marker.transform.position = position;
+        marker.transform.localScale = size;
+        
+        // Remove collider
+        var collider = marker.GetComponent<Collider>();
+        if (collider != null) Object.DestroyImmediate(collider);
+        
+        // Set color with transparency
+        var renderer = marker.GetComponent<Renderer>();
+        if (renderer != null)
+        {
+            Shader shader = Shader.Find("Sprites/Default");
+            if (shader == null) shader = Shader.Find("Standard");
+            
+            Material mat = new Material(shader);
+            mat.color = new Color(color.r, color.g, color.b, 0.4f);
+            
+            if (shader.name == "Standard")
+            {
+                mat.SetFloat("_Mode", 3f);
+                mat.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
+                mat.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+                mat.SetInt("_ZWrite", 0);
+                mat.DisableKeyword("_ALPHATEST_ON");
+                mat.EnableKeyword("_ALPHABLEND_ON");
+                mat.DisableKeyword("_ALPHAPREMULTIPLY_ON");
+                mat.renderQueue = 3000;
+            }
+            
+            renderer.material = mat;
+        }
+    }
+
+    private static Transform GetDungeonEntityRoot(Transform t, Transform dungeonRoot)
+    {
+        Transform current = t;
+        while (current != null && current.parent != dungeonRoot && current.parent != null)
+        {
+            current = current.parent;
+        }
+        return current;
+    }
+
     [MenuItem("Tools/Inspect Generated Dungeon")]
     public static void InspectDungeon()
     {
@@ -373,6 +501,14 @@ public static class DungeonSceneInspector
         Transform[] transforms = genGo.GetComponentsInChildren<Transform>(true);
         Renderer[] renderers = genGo.GetComponentsInChildren<Renderer>(true);
 
+        // Setup visual errors root
+        GameObject errorsRoot = GameObject.Find("__DungeonErrors__");
+        if (errorsRoot != null)
+        {
+            Object.DestroyImmediate(errorsRoot);
+        }
+        errorsRoot = new GameObject("__DungeonErrors__");
+
         System.Text.StringBuilder sb = new System.Text.StringBuilder();
         sb.AppendLine("=== ADVANCED DUNGEON SCENE INSPECTION REPORT ===");
         sb.AppendLine($"Report generated: {System.DateTime.Now}");
@@ -413,6 +549,7 @@ public static class DungeonSceneInspector
                 {
                     exactDuplicates++;
                     duplicateLogs.Add($"Exact Duplicate GameObject: '{t1.name}' at {t1.position.ToString("F3")} matches '{t2.name}' at {t2.position.ToString("F3")}");
+                    CreateErrorMarker(errorsRoot, t1.position, $"Duplicate_{t1.name}", Color.yellow, new Vector3(1.2f, 1.2f, 1.2f));
                 }
             }
         }
@@ -426,6 +563,12 @@ public static class DungeonSceneInspector
                 Renderer r2 = renderers[j];
 
                 if (r1 == null || r2 == null) continue;
+
+                // Skip if they belong to the same top-level prefab generated object
+                if (GetDungeonEntityRoot(r1.transform, genGo.transform) == GetDungeonEntityRoot(r2.transform, genGo.transform))
+                {
+                    continue;
+                }
 
                 Vector3 p1 = r1.transform.position;
                 Vector3 p2 = r2.transform.position;
@@ -442,6 +585,7 @@ public static class DungeonSceneInspector
                     {
                         overlappingFloors++;
                         floorOverlapLogs.Add($"Floor/Ceiling Overlap (Z-Fighting): '{r1.gameObject.name}' at {p1.ToString("F3")} overlaps '{r2.gameObject.name}' at {p2.ToString("F3")} (Y-diff: {yDiff * 1000f:F1}mm)");
+                        CreateErrorMarker(errorsRoot, (p1 + p2) * 0.5f, $"FloorOverlap_{r1.name}_{r2.name}", Color.blue, new Vector3(3f, 0.15f, 3f));
                     }
                     continue;
                 }
@@ -467,7 +611,10 @@ public static class DungeonSceneInspector
                         if (minPlaneDist < 0.005f && Vector3.Distance(p1, p2) < 1.0f)
                         {
                             overlappingWalls++;
-                            wallOverlapLogs.Add($"Parallel Wall Overlap (Z-Fighting): '{r1.gameObject.name}' at {p1.ToString("F3")} overlaps '{r2.gameObject.name}' at {p2.ToString("F3")} (Plane-diff: {minPlaneDist * 1000f:F1}mm)");
+                            string parent1 = r1.transform.parent != null ? r1.transform.parent.name : "null";
+                            string parent2 = r2.transform.parent != null ? r2.transform.parent.name : "null";
+                            wallOverlapLogs.Add($"Parallel Wall Overlap (Z-Fighting): '{r1.gameObject.name}' (parent: {parent1}) at {p1.ToString("F3")} overlaps '{r2.gameObject.name}' (parent: {parent2}) at {p2.ToString("F3")} (Plane-diff: {minPlaneDist * 1000f:F1}mm)");
+                            CreateErrorMarker(errorsRoot, (p1 + p2) * 0.5f, $"WallOverlap_{r1.name}_{r2.name}", Color.red, new Vector3(0.3f, 3.5f, 3.5f));
                         }
                     }
                 }
@@ -540,6 +687,7 @@ public static class DungeonSceneInspector
                         {
                             floorHoleGaps++;
                             floorHoleLogs.Add($"Floor Hole: Cell ({x}, {y}, {z}) of type {cell.type} has hasFloor=true but no floor geometry is instantiated nearby.");
+                            CreateErrorMarker(errorsRoot, floorCenter, $"FloorHole_Cell_{x}_{y}_{z}", Color.blue, new Vector3(4f, 0.2f, 4f));
                         }
                     }
 
@@ -565,6 +713,7 @@ public static class DungeonSceneInspector
                         {
                             ceilingHoleGaps++;
                             ceilingHoleLogs.Add($"Ceiling Hole: Cell ({x}, {y}, {z}) of type {cell.type} has hasCeiling=true but no ceiling geometry is instantiated nearby.");
+                            CreateErrorMarker(errorsRoot, ceilingCenter, $"CeilingHole_Cell_{x}_{y}_{z}", Color.cyan, new Vector3(4f, 0.2f, 4f));
                         }
                     }
 
@@ -607,6 +756,8 @@ public static class DungeonSceneInspector
                             {
                                 voidHoleGaps++;
                                 voidHoleLogs.Add($"Void Wall Hole: Cell ({x}, {y}, {z}) facing Empty direction {dir} has no enclosing boundary wall. Boundary position: {boundaryCenter.ToString("F2")}");
+                                Vector3 size = (dir.x != 0) ? new Vector3(0.2f, 4f, 4f) : new Vector3(4f, 4f, 0.2f);
+                                CreateErrorMarker(errorsRoot, boundaryCenter, $"VoidHole_Cell_{x}_{y}_{z}_Dir_{dir}", Color.magenta, size);
                             }
                         }
                     }
@@ -636,10 +787,12 @@ public static class DungeonSceneInspector
                                         {
                                             if (r == null) continue;
                                             string rName = r.gameObject.name.ToLower();
-                                            if (rName.Contains("wall") || rName.Contains("doorway") || rName.Contains("arc"))
+                                            if (rName.Contains("wall") || rName.Contains("doorway") || rName.Contains("arc") || rName.Contains("barrier"))
                                             {
-                                                float distSq = r.bounds.SqrDistance(boundaryCenter);
-                                                if (distSq < 0.05f)
+                                                // Check XZ plane distance (ignore Y axis differences for short barriers/decorations)
+                                                Vector3 closestPoint = r.bounds.ClosestPoint(boundaryCenter);
+                                                float xzDistSq = Mathf.Pow(closestPoint.x - boundaryCenter.x, 2) + Mathf.Pow(closestPoint.z - boundaryCenter.z, 2);
+                                                if (xzDistSq < 0.05f)
                                                 {
                                                     hasWallMesh = true;
                                                     break;
@@ -650,6 +803,8 @@ public static class DungeonSceneInspector
                                         {
                                             walkwayHoleGaps++;
                                             walkwayHoleLogs.Add($"Walkway Fall Hazard: Playable cell ({x}, {y}, {z}) has floor, but neighbor cell ({nx}, {y}, {nz}) is floorless (above stairs) and there is no wall separating them. Boundary: {boundaryCenter.ToString("F2")}");
+                                            Vector3 hazardSize = (dir.x != 0) ? new Vector3(0.2f, 4f, 4f) : new Vector3(4f, 4f, 0.2f);
+                                            CreateErrorMarker(errorsRoot, boundaryCenter, $"WalkwayHazard_Cell_{x}_{y}_{z}_Dir_{dir}", new Color(1.0f, 0.5f, 0f), hazardSize);
                                         }
                                     }
                                 }
@@ -657,6 +812,15 @@ public static class DungeonSceneInspector
                         }
                     }
                 }
+            }
+        }
+
+        // Clean up errors parent if there are no errors
+        if (exactDuplicates == 0 && overlappingFloors == 0 && overlappingWalls == 0 && voidHoleGaps == 0 && floorHoleGaps == 0 && ceilingHoleGaps == 0 && walkwayHoleGaps == 0)
+        {
+            if (errorsRoot != null)
+            {
+                Object.DestroyImmediate(errorsRoot);
             }
         }
 

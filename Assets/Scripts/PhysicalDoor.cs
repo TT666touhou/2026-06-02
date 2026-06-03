@@ -2,33 +2,32 @@ using UnityEngine;
 
 public class PhysicalDoor : MonoBehaviour
 {
-    [Header("Door Physics Settings")]
-    public float doorMass = 15f;
-    public float doorDrag = 1f;
-    public float doorAngularDrag = 2f;
-
-    [Header("Swing Limits")]
-    public float minAngle = -90f;
-    public float maxAngle = 90f;
-    public float bounciness = 0.2f;
-
     private Transform doorPanel;
-    private Rigidbody doorRigidbody;
-    private HingeJoint doorHinge;
-    private BoxCollider doorCollider;
 
     private void Start()
     {
-        InitializeDoorPhysics();
+        InitializeDoor();
     }
 
-    private void InitializeDoorPhysics()
+    private void InitializeDoor()
     {
-        // 1. Find the door panel child (contains "door" but not "handle" to avoid selecting the handle first)
-        foreach (Transform child in transform)
+        // 1. Find the door panel child recursively (contains "door" but not "handle", "frame", and not root name)
+        string rootName = gameObject.name;
+        if (rootName.EndsWith("(Clone)"))
         {
-            string lowerName = child.name.ToLower();
-            if (lowerName.Contains("door") && !lowerName.Contains("handle"))
+            rootName = rootName.Substring(0, rootName.Length - 7);
+        }
+
+        foreach (Transform child in GetComponentsInChildren<Transform>(true))
+        {
+            if (child == transform) continue;
+            string childName = child.name;
+            string childNameLower = childName.ToLower();
+            
+            if (childNameLower.Contains("door") && 
+                childName != rootName && 
+                !childNameLower.Contains("handle") && 
+                !childNameLower.Contains("frame"))
             {
                 doorPanel = child;
                 break;
@@ -41,81 +40,138 @@ public class PhysicalDoor : MonoBehaviour
             return;
         }
 
-        // 2. Add Rigidbody to the doorway frame (parent) as kinematic to act as the joint's fixed anchor
+        // Force non-static status at runtime so physics work correctly
+        doorPanel.gameObject.isStatic = false;
+        foreach (Transform t in doorPanel.GetComponentsInChildren<Transform>(true))
+        {
+            t.gameObject.isStatic = false;
+        }
+
+        // 2. Ensure doorframe (root) has a kinematic Rigidbody
         Rigidbody frameRb = GetComponent<Rigidbody>();
         if (frameRb == null)
         {
             frameRb = gameObject.AddComponent<Rigidbody>();
-            frameRb.isKinematic = true;
-            frameRb.useGravity = false;
         }
+        frameRb.isKinematic = true;
 
-        // 3. Add BoxCollider to the door panel (covers the door mesh properly)
-        doorCollider = doorPanel.GetComponent<BoxCollider>();
+        // 3. Ensure BoxCollider and Rigidbody exist on the door panel
+        Collider doorCollider = doorPanel.GetComponent<BoxCollider>();
         if (doorCollider == null)
         {
-            // Remove any existing MeshCollider on the door to avoid duplicate collision calculation
             MeshCollider existingMeshCollider = doorPanel.GetComponent<MeshCollider>();
             if (existingMeshCollider != null)
             {
-                Destroy(existingMeshCollider);
+                DestroyImmediate(existingMeshCollider);
             }
 
-            doorCollider = doorPanel.gameObject.AddComponent<BoxCollider>();
-            
-            // Set bounds according to MeshFilter bounds (which matches door_7 size: ~1.01m x 2.07m x 0.09m)
+            BoxCollider boxCol = doorPanel.gameObject.AddComponent<BoxCollider>();
             MeshFilter mf = doorPanel.GetComponent<MeshFilter>();
             if (mf != null && mf.sharedMesh != null)
             {
-                doorCollider.center = mf.sharedMesh.bounds.center;
-                doorCollider.size = mf.sharedMesh.bounds.size;
+                boxCol.center = mf.sharedMesh.bounds.center;
+                boxCol.size = mf.sharedMesh.bounds.size;
             }
             else
             {
-                // Fallback hardcoded values based on dump structure
-                doorCollider.center = new Vector3(0.49f, 1.06f, 0.04f);
-                doorCollider.size = new Vector3(1.01f, 2.07f, 0.09f);
+                boxCol.center = new Vector3(0.49f, 1.06f, 0.04f);
+                boxCol.size = new Vector3(1.01f, 2.07f, 0.09f);
             }
         }
 
-        // 4. Add Rigidbody to the door panel
-        doorRigidbody = doorPanel.GetComponent<Rigidbody>();
-        if (doorRigidbody == null)
+        Rigidbody doorRb = doorPanel.GetComponent<Rigidbody>();
+        if (doorRb == null)
         {
-            doorRigidbody = doorPanel.gameObject.AddComponent<Rigidbody>();
+            doorRb = doorPanel.gameObject.AddComponent<Rigidbody>();
         }
-        doorRigidbody.mass = doorMass;
-        doorRigidbody.drag = doorDrag;
-        doorRigidbody.angularDrag = doorAngularDrag;
-        doorRigidbody.useGravity = true;
-        doorRigidbody.isKinematic = false;
-        doorRigidbody.collisionDetectionMode = CollisionDetectionMode.ContinuousSpeculative;
+        doorRb.mass = 15f;
+        doorRb.drag = 1.0f;
+        doorRb.angularDrag = 3.0f;
+        doorRb.useGravity = true;
 
-        // 5. Add HingeJoint to the door panel (anchor at (0,0,0) which is already the hinge axis)
-        doorHinge = doorPanel.GetComponent<HingeJoint>();
+        // 4. Ensure HingeJoint exists on the door panel
+        HingeJoint doorHinge = doorPanel.GetComponent<HingeJoint>();
         if (doorHinge == null)
         {
             doorHinge = doorPanel.gameObject.AddComponent<HingeJoint>();
         }
-
-        doorHinge.anchor = Vector3.zero;
-        doorHinge.axis = new Vector3(0, 1, 0); // Rotate around Y axis
         doorHinge.connectedBody = frameRb;
-        doorHinge.enableCollision = false; // Disable collision between door panel and doorframe rb
-
-        // 6. Set Hinge limits
+        doorHinge.anchor = Vector3.zero;
+        doorHinge.axis = Vector3.up;
+        doorHinge.autoConfigureConnectedAnchor = true; // Prevents the hinge from stretching the joint space
         doorHinge.useLimits = true;
         JointLimits limits = new JointLimits();
-        limits.min = minAngle;
-        limits.max = maxAngle;
-        limits.bounciness = bounciness;
+        limits.min = -120f;
+        limits.max = 120f;
+        limits.bounciness = 0.1f;
         doorHinge.limits = limits;
 
-        // 7. Explicitly ignore collision between door collider and frame collider for perfect stability
-        Collider frameCollider = GetComponent<Collider>();
-        if (doorCollider != null && frameCollider != null)
+        // 5. IGNORE COLLISIONS between door panel and nearby environment (doorframe, pillars, walls, floors, ceilings)
+        // to prevent physics engine jittering and locking.
+        Collider[] doorColliders = doorPanel.GetComponentsInChildren<Collider>(true);
+        
+        // Find all colliders within a 2.5m sphere at the doorway position
+        Collider[] nearbyColliders = Physics.OverlapSphere(transform.position, 2.5f, ~0, QueryTriggerInteraction.Collide);
+
+        foreach (var doorCol in doorColliders)
         {
-            Physics.IgnoreCollision(doorCollider, frameCollider);
+            // First ignore internal doorway frame colliders
+            Collider[] frameColliders = GetComponentsInChildren<Collider>(true);
+            foreach (var frameCol in frameColliders)
+            {
+                if (frameCol != doorCol && !frameCol.transform.IsChildOf(doorPanel))
+                {
+                    Physics.IgnoreCollision(doorCol, frameCol, true);
+                }
+            }
+
+            // Next ignore nearby environmental static and decorative colliders
+            foreach (var col in nearbyColliders)
+            {
+                if (col == doorCol || col.transform.IsChildOf(doorPanel))
+                    continue;
+
+                string colNameLower = col.name.ToLower();
+                bool isStaticEnv = col.gameObject.isStatic || 
+                                   col.gameObject.layer == 8 || // Environment
+                                   col.gameObject.layer == 12 || // Decoration
+                                   colNameLower.Contains("pillar") || 
+                                   colNameLower.Contains("wall") || 
+                                   colNameLower.Contains("floor") || 
+                                   colNameLower.Contains("ceiling") || 
+                                   colNameLower.Contains("doorway") ||
+                                   colNameLower.Contains("column") ||
+                                   colNameLower.Contains("barrier");
+
+                if (isStaticEnv)
+                {
+                    Physics.IgnoreCollision(doorCol, col, true);
+                }
+            }
+        }
+    }
+
+    public void Interact()
+    {
+        // Default physical impulse when interacted without parameters
+        if (doorPanel == null) return;
+        Rigidbody rb = doorPanel.GetComponent<Rigidbody>();
+        if (rb != null)
+        {
+            rb.AddRelativeTorque(Vector3.up * 12f, ForceMode.Impulse);
+            Debug.Log($"[PhysicalDoor] Applied default relative torque to {gameObject.name}");
+        }
+    }
+
+    public void Interact(Vector3 pushDirection, Vector3 hitPoint)
+    {
+        if (doorPanel == null) return;
+        Rigidbody rb = doorPanel.GetComponent<Rigidbody>();
+        if (rb != null)
+        {
+            // Apply push force at the raycast hit point
+            rb.AddForceAtPosition(pushDirection * 15.0f, hitPoint, ForceMode.Impulse);
+            Debug.Log($"[PhysicalDoor] Applied direct force of {pushDirection * 15f} to {gameObject.name} at {hitPoint}");
         }
     }
 }

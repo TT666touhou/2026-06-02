@@ -155,14 +155,23 @@ public class FirstPersonController : MonoBehaviour
 
             Ray ray = new Ray(playerCamera.transform.position, playerCamera.transform.forward);
             RaycastHit hit;
-            if (Physics.Raycast(ray, out hit, 2.5f))
+            if (Physics.Raycast(ray, out hit, 4.0f))
             {
-                Rigidbody rb = hit.collider.attachedRigidbody;
-                if (rb != null && !rb.isKinematic)
+                // 1. Try to find PhysicalDoor component in the hit object or its parents
+                PhysicalDoor door = hit.collider.GetComponentInParent<PhysicalDoor>();
+                if (door != null)
                 {
-                    // Apply physical impulse force to swing the door open
-                    Vector3 pushDirection = playerCamera.transform.forward;
-                    rb.AddForceAtPosition(pushDirection * 12.0f, hit.point, ForceMode.Impulse);
+                    door.Interact(playerCamera.transform.forward, hit.point);
+                }
+                else
+                {
+                    // 2. Fallback to physical impulse force if it's a dynamic physics prop
+                    Rigidbody rb = hit.collider.attachedRigidbody;
+                    if (rb != null && !rb.isKinematic)
+                    {
+                        Vector3 pushDirection = playerCamera.transform.forward;
+                        rb.AddForceAtPosition(pushDirection * 12.0f, hit.point, ForceMode.Impulse);
+                    }
                 }
             }
         }

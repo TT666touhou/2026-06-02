@@ -1,7 +1,7 @@
 === ADVANCED DUNGEON SCENE INSPECTION REPORT ===
-Report generated: 2026/6/3 上午 01:40:20
-Total GameObjects scanned: 283
-Total Renderers scanned: 270
+Report generated: 2026/6/3 下午 06:49:50
+Total GameObjects scanned: 899
+Total Renderers scanned: 877
 
 --- 1. EXACT DUPLICATE GAMEOBJECTS (Z-Fighting & Perf hit) ---
 Count: 0
@@ -22,5 +22,16 @@ Count: 0
 Count: 0
 
 --- 7. WALKWAY FALL HAZARDS (Holes looking into vertical shafts) ---
-Count: 0
+Count: 11
+  Walkway Fall Hazard: Playable cell (6, 1, 3) has floor, but neighbor cell (7, 1, 3) is floorless (above stairs) and there is no wall separating them. Boundary: (26.00, 6.00, 12.00)
+  Walkway Fall Hazard: Playable cell (6, 1, 5) has floor, but neighbor cell (7, 1, 5) is floorless (above stairs) and there is no wall separating them. Boundary: (26.00, 6.00, 20.00)
+  Walkway Fall Hazard: Playable cell (8, 1, 3) has floor, but neighbor cell (7, 1, 3) is floorless (above stairs) and there is no wall separating them. Boundary: (30.00, 6.00, 12.00)
+  Walkway Fall Hazard: Playable cell (8, 1, 4) has floor, but neighbor cell (7, 1, 4) is floorless (above stairs) and there is no wall separating them. Boundary: (30.00, 6.00, 16.00)
+  Walkway Fall Hazard: Playable cell (8, 1, 5) has floor, but neighbor cell (7, 1, 5) is floorless (above stairs) and there is no wall separating them. Boundary: (30.00, 6.00, 20.00)
+  Walkway Fall Hazard: Playable cell (13, 1, 18) has floor, but neighbor cell (13, 1, 17) is floorless (above stairs) and there is no wall separating them. Boundary: (52.00, 6.00, 70.00)
+  Walkway Fall Hazard: Playable cell (4, 2, 13) has floor, but neighbor cell (4, 2, 12) is floorless (above stairs) and there is no wall separating them. Boundary: (16.00, 10.00, 50.00)
+  Walkway Fall Hazard: Playable cell (6, 2, 5) has floor, but neighbor cell (6, 2, 4) is floorless (above stairs) and there is no wall separating them. Boundary: (24.00, 10.00, 18.00)
+  Walkway Fall Hazard: Playable cell (6, 2, 13) has floor, but neighbor cell (6, 2, 12) is floorless (above stairs) and there is no wall separating them. Boundary: (24.00, 10.00, 50.00)
+  Walkway Fall Hazard: Playable cell (8, 2, 4) has floor, but neighbor cell (8, 2, 3) is floorless (above stairs) and there is no wall separating them. Boundary: (32.00, 10.00, 14.00)
+  Walkway Fall Hazard: Playable cell (8, 2, 4) has floor, but neighbor cell (7, 2, 4) is floorless (above stairs) and there is no wall separating them. Boundary: (30.00, 10.00, 16.00)
 

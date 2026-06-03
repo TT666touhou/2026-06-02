@@ -1,0 +1,17 @@
+=== Prefab Structure: wall_doorway_scaffold ===
+Root Name: wall_doorway_scaffold, Layer: 8, StaticFlags: 0
+  - Component: Transform
+  - Component: MeshFilter
+  - Component: MeshRenderer
+  - Component: MeshCollider
+  - Component: Rigidbody
+  - Component: PhysicalDoor
+Child Name: wall_doorway_scaffold_door
+  - LocalPosition: (0.82, 0.00, 0.00)
+  - StaticFlags: 0
+    * Component: Transform
+    * Component: MeshFilter
+    * Component: MeshRenderer
+    * Component: BoxCollider
+    * Component: Rigidbody
+    * Component: HingeJoint

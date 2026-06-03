@@ -8,14 +8,8 @@ public class GridDungeonGenerator : MonoBehaviour
         Empty,
         Room,
         Corridor,
+        Doorway,
         Stairs
-    }
-
-    public enum CorridorStyle
-    {
-        CircularTunnel,
-        SquareCorridor,
-        Mixed
     }
 
     public enum DungeonTheme
@@ -25,264 +19,458 @@ public class GridDungeonGenerator : MonoBehaviour
         Mixed
     }
 
+    public enum CorridorStyle
+    {
+        CircularTunnel,
+        SquareCorridor,
+        Mixed
+    }
+
     [System.Serializable]
     public struct DungeonCell
     {
         public CellType type;
         public int roomId;
-        public int rotation; // Euler Y rotation for stairs or tunnels
+        public int rotation; // Euler Y rotation for stairs, doors, etc.
         public bool hasFloor;
         public bool hasCeiling;
+        public string floorPrefabName; // Overrides for specific themes
+        public string wallPrefabName;  // Overrides for specific themes
     }
 
     [System.Serializable]
     public class Room
     {
         public int id;
-        public int x;
-        public int y; // layer
-        public int z;
-        public int w;
-        public int h;
+        public string theme;
+        public int x; // Grid X start
+        public int y; // Grid Y start (bottom layer)
+        public int z; // Grid Z start
+        public int w; // Width in cells
+        public int h; // Depth in cells
+        public int layersCount; // Height in cells
+        public List<Vector3Int> entrancePoints = new List<Vector3Int>();
+        public List<Vector3Int> exitPoints = new List<Vector3Int>();
     }
 
-    [Header("Bunker Theme Prefabs")]
-    public GameObject floorPrefab;       // floor_1 (4m x 4m)
-    public GameObject wallPrefab;        // wall_1_plain (4.06m x 3m)
-    public GameObject ceilingPrefab;     // floor_1 flipped upside down as ceiling (4m x 4m)
-    public GameObject doorwayPrefab;     // doorway_2_plain (4.06m x 3m)
+    [Header("Standard Prefab Assignments (Fallbacks)")]
+    public GameObject floorPrefab;
+    public GameObject wallPrefab;
+    public GameObject ceilingPrefab;
+    public GameObject doorwayPrefab;
 
     [Header("Gothic Theme Prefabs")]
-    public GameObject gothicFloorPrefab;    // floor_ceiling_1 (4m x 4m)
-    public GameObject gothicWallPrefab;     // wall_1_plain (Gothic version, 4m x 3m)
-    public GameObject gothicCeilingPrefab;  // floor_ceiling_1 flipped upside down
-    public GameObject gothicDoorwayPrefab;  // arc_1_wall_1_plain (stone archway)
+    public GameObject gothicFloorPrefab;
+    public GameObject gothicWallPrefab;
+    public GameObject gothicCeilingPrefab;
+    public GameObject gothicDoorwayPrefab;
 
-    [Header("Tunnel Prefabs")]
-    public GameObject tunnelStraight;    // tunnel_straight (3.5m wide, 6m long)
-    public GameObject tunnelCorner;      // tunnel_ancle (6m cell corner)
-    public GameObject tunnelTJunction;   // tunnel_junction_three_way (6m cell T)
-    public GameObject tunnelXJunction;   // tunnel_junction_four_way (6m cell X)
+    [Header("Tunnel Prefabs (Deprecated)")]
+    public GameObject tunnelStraight;
+    public GameObject tunnelCorner;
+    public GameObject tunnelTJunction;
+    public GameObject tunnelXJunction;
 
     [Header("Staircase Prefabs")]
-    public GameObject stairsPrefab;      // stairs_mp_1 or stairs_5_concrete (for Gothic)
-    public GameObject bunkerStairsPrefab; // stairs_5_wood (for Bunker)
-    public GameObject pillarPrefab;       // pillar_1 (Gothic Ruins)
-    public GameObject bunkerPillarPrefab; // pillar_11 (Bunkers)
-    public float stairsRotationOffset = 180f; // Offset to align stairs model forward with rising direction
+    public GameObject stairsPrefab;
+    public GameObject bunkerStairsPrefab;
+    public GameObject pillarPrefab;
+    public GameObject bunkerPillarPrefab;
 
-    [Header("Dungeon Theme & Layout Settings")]
-    public DungeonTheme dungeonTheme = DungeonTheme.GothicRuins;
+    [Header("Theme & Scale Configuration")]
+    public DungeonTheme dungeonTheme = DungeonTheme.Mixed;
     public CorridorStyle corridorStyle = CorridorStyle.SquareCorridor;
+    public float cellSize = 4.0f;
+    public float cellHeight = 4.0f;
+    public Vector3 prefabScale = Vector3.one;
 
-    public int width = 12;               // Grid width in cells
-    public int height = 12;              // Grid depth in cells
-    public int layers = 2;               // Number of vertical layers (levels)
-    public float cellSize = 6.0f;        // Size of one cell (6 meters)
-    public float cellHeight = 3.0f;      // Height of one layer (3 meters)
-
-    [Header("Generation Settings")]
-    public int minRoomSize = 2;          // Min room size in cells
-    public int maxRoomSize = 3;          // Max room size in cells
-    public int roomsPerLayer = 3;        // Number of random rooms per level
-    public float roomDensity = 0.20f;    // Deprecated but kept for API compatibility
+    [Header("Layout Settings")]
+    public int width = 24;
+    public int height = 24;
+    public int layers = 3;
+    public bool useRandomSeed = true;
     public int seed = 1337;
+
+    // Kept for inspector layout compatibility
+    [HideInInspector] public int minRoomSize = 2;
+    [HideInInspector] public int maxRoomSize = 3;
+    [HideInInspector] public int roomsPerLayer = 3;
+    [HideInInspector] public float roomDensity = 0.2f;
+    [HideInInspector] public float stairsRotationOffset = 180f;
 
     [HideInInspector]
     [SerializeField]
     private List<GameObject> generatedObjects = new List<GameObject>();
 
     private HashSet<Vector3> spawnedPillarPositions = new HashSet<Vector3>();
-
     private DungeonCell[,,] grid;
     private List<Room> rooms = new List<Room>();
+
+#if UNITY_EDITOR
+    private GameObject LoadPrefab(string name)
+    {
+        string path = "Assets/Prefabs/KayKit Dungeon/" + name + ".prefab";
+        GameObject prefab = UnityEditor.AssetDatabase.LoadAssetAtPath<GameObject>(path);
+        if (prefab == null)
+        {
+            Debug.LogError($"[GridDungeonGenerator] Prefab not found at path: {path}");
+        }
+        return prefab;
+    }
+#endif
 
     [ContextMenu("Generate Dungeon")]
     public void GenerateDungeon()
     {
-        ClearDungeon();
-        Random.InitState(seed);
+        int attemptsToPlaceAll = 0;
+        bool allRoomsPlaced = false;
 
-        // 1. Generate 3D grid layout
-        GenerateLayout();
+        string[] themes = {
+            "DividingHall",   // Y=0, 3x3
+            "JailCells",      // Y=0, 2x2
+            "Cellar",         // Y=0, 3x3
+            "GuardPost",      // Y=0..1, 2x2 (Climb from 0 to 1)
+            "MageLibrary",    // Y=1, 2x2
+            "GoldTreasury",   // Y=1, 2x2
+            "SewerDock",      // Y=0..1, 2x2 (Descend from 1 to 0)
+            "CastleHall",     // Y=0..2, 3x3 (Climb from 0 to 2)
+            "MineShaft",      // Y=1..2, 3x3 (Descend from 2 to 1)
+            "LivingQuarters", // Y=0..1, 2x2 (Descend from 1 to 0)
+            "TreasureVault"   // Y=0, 2x2
+        };
 
-        // 2. Instantiate all modular geometries
-        InstantiateDungeon();
-    }
-
-    private void GenerateLayout()
-    {
-        grid = new DungeonCell[width, layers, height];
-        rooms.Clear();
-
-        // Initialize cells as Empty with floors and ceilings enabled
-        for (int x = 0; x < width; x++)
+        while (!allRoomsPlaced && attemptsToPlaceAll < 100)
         {
-            for (int y = 0; y < layers; y++)
+            attemptsToPlaceAll++;
+            ClearDungeon();
+
+            // 1. Force grid properties for our 11 themed rooms and vertical transitions
+            width = 24;
+            height = 24;
+            layers = 3;
+            cellSize = 4.0f;
+            cellHeight = 4.0f;
+            prefabScale = Vector3.one;
+
+            if (useRandomSeed)
             {
-                for (int z = 0; z < height; z++)
-                {
-                    grid[x, y, z] = new DungeonCell
-                    {
-                        type = CellType.Empty,
-                        roomId = 0,
-                        rotation = 0,
-                        hasFloor = true,
-                        hasCeiling = true
-                    };
-                }
+                // Use System.Random to ensure seed changes in Editor Mode when clicking Tools
+                seed = new System.Random().Next(0, 1000000);
             }
-        }
+            Random.InitState(seed);
 
-        // Place Rooms on each layer using Box Packing
-        int currentRoomId = 1;
-        for (int y = 0; y < layers; y++)
-        {
-            int placedRooms = 0;
-            int attempts = 0;
-            while (placedRooms < roomsPerLayer && attempts < 150)
+            // 2. Initialize Grid
+            grid = new DungeonCell[width, layers, height];
+            for (int x = 0; x < width; x++)
             {
-                attempts++;
-                int rw = Random.Range(minRoomSize, maxRoomSize + 1);
-                int rh = Random.Range(minRoomSize, maxRoomSize + 1);
-                
-                // Keep 1 grid buffer on borders
-                int rx = Random.Range(1, width - rw - 1);
-                int rz = Random.Range(1, height - rh - 1);
-
-                // Check overlap with existing rooms (including buffer zone)
-                bool overlap = false;
-                for (int tx = rx - 1; tx < rx + rw + 1; tx++)
+                for (int y = 0; y < layers; y++)
                 {
-                    for (int tz = rz - 1; tz < rz + rh + 1; tz++)
+                    for (int z = 0; z < height; z++)
                     {
-                        if (grid[tx, y, tz].type != CellType.Empty)
+                        grid[x, y, z] = new DungeonCell
                         {
-                            overlap = true;
-                            break;
-                        }
-                    }
-                    if (overlap) break;
-                }
-
-                if (!overlap)
-                {
-                    Room r = new Room { id = currentRoomId++, x = rx, y = y, z = rz, w = rw, h = rh };
-                    rooms.Add(r);
-                    placedRooms++;
-
-                    // Mark grid cells
-                    for (int tx = rx; tx < rx + rw; tx++)
-                    {
-                        for (int tz = rz; tz < rz + rh; tz++)
-                        {
-                            grid[tx, y, tz].type = CellType.Room;
-                            grid[tx, y, tz].roomId = r.id;
-                        }
+                            type = CellType.Empty,
+                            roomId = 0,
+                            rotation = 0,
+                            hasFloor = false,
+                            hasCeiling = false,
+                            floorPrefabName = "",
+                            wallPrefabName = ""
+                        };
                     }
                 }
             }
-        }
 
-        // Connect Rooms on each layer using A* pathfinding
-        for (int y = 0; y < layers; y++)
-        {
-            List<Room> layerRooms = rooms.FindAll(r => r.y == y);
-            for (int i = 0; i < layerRooms.Count - 1; i++)
-            {
-                Vector3Int start = new Vector3Int(layerRooms[i].x + layerRooms[i].w / 2, y, layerRooms[i].z + layerRooms[i].h / 2);
-                Vector3Int end = new Vector3Int(layerRooms[i + 1].x + layerRooms[i + 1].w / 2, y, layerRooms[i + 1].z + layerRooms[i + 1].h / 2);
-                ConnectCells(start, end);
-            }
-            if (layerRooms.Count > 2)
-            {
-                Vector3Int start = new Vector3Int(layerRooms[layerRooms.Count - 1].x + layerRooms[layerRooms.Count - 1].w / 2, y, layerRooms[layerRooms.Count - 1].z + layerRooms[layerRooms.Count - 1].h / 2);
-                Vector3Int end = new Vector3Int(layerRooms[0].x + layerRooms[0].w / 2, y, layerRooms[0].z + layerRooms[0].h / 2);
-                ConnectCells(start, end);
-            }
-        }
+            // 3. Layout Rooms sequentially to build our rogue-like graph
+            rooms.Clear();
+            allRoomsPlaced = true;
 
-        // Connect layers vertically using stairs
-        for (int y = 0; y < layers - 1; y++)
-        {
-            bool stairPlaced = false;
-            int attempts = 0;
-            while (!stairPlaced && attempts < 500)
+            for (int i = 0; i < themes.Length; i++)
             {
-                attempts++;
-                int sx = Random.Range(2, width - 2);
-                int sz = Random.Range(2, height - 2);
+                string theme = themes[i];
+                int rw = 2;
+                int rh = 2;
+                int rlayers = 1;
+                int startY = 0;
 
-                // Shuffled rotations to evaluate all directions (North, East, South, West)
-                List<int> rotations = new List<int> { 0, 90, 180, 270 };
-                for (int i = 0; i < rotations.Count; i++)
+                // Define room sizes
+                if (theme == "DividingHall" || theme == "Cellar" || theme == "CastleHall" || theme == "MineShaft")
                 {
-                    int temp = rotations[i];
-                    int randomIndex = Random.Range(i, rotations.Count);
-                    rotations[i] = rotations[randomIndex];
-                    rotations[randomIndex] = temp;
+                    rw = 3;
+                    rh = 3;
+                }
+                if (theme == "GuardPost" || theme == "SewerDock" || theme == "LivingQuarters" || theme == "MineShaft")
+                {
+                    rlayers = 2;
+                }
+                if (theme == "CastleHall")
+                {
+                    rlayers = 3;
                 }
 
-                foreach (int rot in rotations)
+                // Set starting layer based on our vertical flow sequence
+                if (theme == "MageLibrary" || theme == "GoldTreasury") startY = 1;
+                if (theme == "MineShaft") startY = 1; // spans Y=1..2
+
+                bool placed = false;
+                for (int attempt = 0; attempt < 500; attempt++)
                 {
-                    Vector3Int riseDir = Vector3Int.zero;
-                    Vector3Int entranceDir = Vector3Int.zero;
-                    if (rot == 0) { riseDir = new Vector3Int(0, 0, 1); entranceDir = new Vector3Int(0, 0, -1); }
-                    else if (rot == 90) { riseDir = new Vector3Int(1, 0, 0); entranceDir = new Vector3Int(-1, 0, 0); }
-                    else if (rot == 180) { riseDir = new Vector3Int(0, 0, -1); entranceDir = new Vector3Int(0, 0, 1); }
-                    else if (rot == 270) { riseDir = new Vector3Int(-1, 0, 0); entranceDir = new Vector3Int(1, 0, 0); }
+                    int rx = Random.Range(1, width - rw - 1);
+                    int rz = Random.Range(1, height - rh - 1);
 
-                    int ex = sx + entranceDir.x;
-                    int ez = sz + entranceDir.z;
-                    int lx = sx + riseDir.x;
-                    int lz = sz + riseDir.z;
-
-                    // Grid bounds checks
-                    if (ex < 1 || ex >= width - 1 || ez < 1 || ez >= height - 1 ||
-                        lx < 1 || lx >= width - 1 || lz < 1 || lz >= height - 1)
-                        continue;
-
-                    CellType stairsType = grid[sx, y, sz].type;
-                    CellType entranceType = grid[ex, y, ez].type;
-
-                    // Place stairs if the cell itself and the entrance cell are Room/Corridor
-                    if ((stairsType == CellType.Room || stairsType == CellType.Corridor) &&
-                        (entranceType == CellType.Room || entranceType == CellType.Corridor))
+                    if (CanPlaceRoom(rx, startY, rz, rw, rlayers, rh))
                     {
-                        grid[sx, y, sz].type = CellType.Stairs;
-                        grid[sx, y, sz].rotation = rot;
-                        grid[sx, y, sz].hasCeiling = false; // Carve ceiling so player can stand
+                        Room r = new Room
+                        {
+                            id = i + 1,
+                            theme = theme,
+                            x = rx,
+                            y = startY,
+                            z = rz,
+                            w = rw,
+                            h = rh,
+                            layersCount = rlayers
+                        };
 
-                        // Carve the floor of the cell directly above the stairs
-                        grid[sx, y + 1, sz].hasFloor = false;
-
-                        // Ensure connection pathways on the upper layer are open
-                        if (grid[sx, y + 1, sz].type == CellType.Empty) grid[sx, y + 1, sz].type = CellType.Corridor;
-                        if (grid[lx, y + 1, lz].type == CellType.Empty) grid[lx, y + 1, lz].type = CellType.Corridor;
-
-                        stairPlaced = true;
+                        DefineRoomEntryExits(r);
+                        rooms.Add(r);
+                        MarkRoomInGrid(r);
+                        placed = true;
                         break;
                     }
                 }
-                if (stairPlaced) break;
+
+                if (!placed)
+                {
+                    allRoomsPlaced = false;
+                    break; // Restart with new seed if we failed to place any room
+                }
             }
+        }
+
+        if (!allRoomsPlaced)
+        {
+            Debug.LogError("[GridDungeonGenerator] Failed to place all 11 rooms after 100 attempts!");
+            return;
+        }
+
+        // 4. Connect Rooms sequentially using A* pathfinding on their respective connection layers
+        for (int i = 0; i < rooms.Count - 1; i++)
+        {
+            Room rA = rooms[i];
+            Room rB = rooms[i + 1];
+            if (rA.exitPoints.Count > 0 && rB.entrancePoints.Count > 0)
+            {
+                Vector3Int exit = rA.exitPoints[0];
+                Vector3Int entrance = rB.entrancePoints[0];
+                ConnectCellsOnLayer(exit, entrance, exit.y);
+            }
+        }
+
+        // Ensure doorway neighbors are connected (to prevent doors to void and guarantee room access)
+        for (int i = 0; i < rooms.Count; i++)
+        {
+            Room r = rooms[i];
+            
+            // Handle entrance points (West facing outwards)
+            if (r.entrancePoints.Count > 0 && r.id > 1) // First room has no entrance door
+            {
+                Vector3Int ent = r.entrancePoints[0];
+                int nx = ent.x - 1;
+                if (nx >= 0 && nx < width)
+                {
+                    if (grid[nx, ent.y, ent.z].type == CellType.Empty)
+                    {
+                        grid[nx, ent.y, ent.z].type = CellType.Corridor;
+                        grid[nx, ent.y, ent.z].hasFloor = true;
+                        grid[nx, ent.y, ent.z].hasCeiling = true;
+                    }
+                }
+            }
+
+            // Handle exit points (East facing outwards)
+            if (r.exitPoints.Count > 0 && r.id < 11) // Last room has no exit door
+            {
+                Vector3Int ex = r.exitPoints[0];
+                int nx = ex.x + 1;
+                if (nx >= 0 && nx < width)
+                {
+                    if (grid[nx, ex.y, ex.z].type == CellType.Empty)
+                    {
+                        grid[nx, ex.y, ex.z].type = CellType.Corridor;
+                        grid[nx, ex.y, ex.z].hasFloor = true;
+                        grid[nx, ex.y, ex.z].hasCeiling = true;
+                    }
+                }
+            }
+        }
+
+        // 5. Instantiate all environmental geometries (walls, floors, columns, etc.)
+        InstantiateDungeon();
+
+        // 6. Decorate rooms with theme-specific props, lights, and banners
+        foreach (var room in rooms)
+        {
+            DecorateRoom(room);
         }
     }
 
-    private void ConnectCells(Vector3Int start, Vector3Int end)
+    private bool CanPlaceRoom(int rx, int ry, int rz, int rw, int rlayers, int rh)
+    {
+        if (rx < 1 || rx + rw >= width - 1 || rz < 1 || rz + rh >= height - 1) return false;
+        if (ry < 0 || ry + rlayers > layers) return false;
+
+        // Check for overlap with 1-cell border buffer
+        for (int x = rx - 1; x <= rx + rw; x++)
+        {
+            for (int z = rz - 1; z <= rz + rh; z++)
+            {
+                for (int y = ry; y < ry + rlayers; y++)
+                {
+                    if (grid[x, y, z].type != CellType.Empty)
+                    {
+                        return false;
+                    }
+                }
+            }
+        }
+        return true;
+    }
+
+    private void DefineRoomEntryExits(Room r)
+    {
+        int entranceY = r.y;
+        int exitY = r.y + r.layersCount - 1;
+
+        // Special layer adjustments for vertical progressions
+        if (r.theme == "SewerDock" || r.theme == "LivingQuarters")
+        {
+            entranceY = r.y + 1;
+            exitY = r.y;
+        }
+        else if (r.theme == "MineShaft")
+        {
+            entranceY = r.y + 1; // Spans Y=1..2. Entrance at upper level Y=2.
+            exitY = r.y;         // Exit at lower level Y=1.
+        }
+
+        // Entrance on West wall, Exit on East wall
+        Vector3Int ent = new Vector3Int(r.x, entranceY, r.z + r.h / 2);
+        Vector3Int ex = new Vector3Int(r.x + r.w - 1, exitY, r.z + r.h / 2);
+
+        r.entrancePoints.Add(ent);
+        r.exitPoints.Add(ex);
+    }
+
+    private void MarkRoomInGrid(Room r)
+    {
+        for (int x = r.x; x < r.x + r.w; x++)
+        {
+            for (int z = r.z; z < r.z + r.h; z++)
+            {
+                for (int y = r.y; y < r.y + r.layersCount; y++)
+                {
+                    grid[x, y, z].type = CellType.Room;
+                    grid[x, y, z].roomId = r.id;
+                    grid[x, y, z].hasFloor = (y == r.y); // Floor on bottom layer by default
+                    grid[x, y, z].hasCeiling = (y == r.y + r.layersCount - 1); // Ceiling on top layer by default
+                }
+            }
+        }
+
+        // Apply platform layout floor rules for double-tier rooms
+        if (r.theme == "GuardPost")
+        {
+            grid[r.x, r.y + 1, r.z].hasFloor = false;
+            grid[r.x + 1, r.y + 1, r.z].hasFloor = false;
+            grid[r.x, r.y + 1, r.z + 1].hasFloor = true;
+            grid[r.x + 1, r.y + 1, r.z + 1].hasFloor = true;
+        }
+        else if (r.theme == "SewerDock")
+        {
+            grid[r.x, r.y + 1, r.z].hasFloor = false;
+            grid[r.x, r.y + 1, r.z + 1].hasFloor = false;
+            grid[r.x + 1, r.y + 1, r.z].hasFloor = true;
+            grid[r.x + 1, r.y + 1, r.z + 1].hasFloor = true;
+        }
+        else if (r.theme == "CastleHall")
+        {
+            // Y=1 side balconies
+            for (int x = r.x; x < r.x + r.w; x++)
+            {
+                for (int z = r.z; z < r.z + r.h; z++)
+                {
+                    grid[x, r.y + 1, z].hasFloor = (x == r.x || x == r.x + 2);
+                }
+            }
+            // Y=2 high back bridge
+            for (int x = r.x; x < r.x + r.w; x++)
+            {
+                for (int z = r.z; z < r.z + r.h; z++)
+                {
+                    grid[x, r.y + 2, z].hasFloor = (z == r.z + 2);
+                }
+            }
+        }
+        else if (r.theme == "MineShaft")
+        {
+            // Y=2 mine high platform
+            for (int x = r.x; x < r.x + r.w; x++)
+            {
+                for (int z = r.z; z < r.z + r.h; z++)
+                {
+                    grid[x, r.y + 1, z].hasFloor = (z >= r.z + 1);
+                }
+            }
+        }
+        else if (r.theme == "LivingQuarters")
+        {
+            // Y=1 living area has full wood floor
+            for (int x = r.x; x < r.x + r.w; x++)
+            {
+                for (int z = r.z; z < r.z + r.h; z++)
+                {
+                    grid[x, r.y + 1, z].hasFloor = true;
+                }
+            }
+        }
+
+        // Force doorways
+        if (r.id > 1)
+        {
+            Vector3Int ent = r.entrancePoints[0];
+            grid[ent.x, ent.y, ent.z].type = CellType.Doorway;
+            grid[ent.x, ent.y, ent.z].roomId = r.id;
+            grid[ent.x, ent.y, ent.z].hasFloor = true;
+            grid[ent.x, ent.y, ent.z].hasCeiling = true;
+        }
+        if (r.id < 11)
+        {
+            Vector3Int ex = r.exitPoints[0];
+            grid[ex.x, ex.y, ex.z].type = CellType.Doorway;
+            grid[ex.x, ex.y, ex.z].roomId = r.id;
+            grid[ex.x, ex.y, ex.z].hasFloor = true;
+            grid[ex.x, ex.y, ex.z].hasCeiling = true;
+        }
+    }
+
+    private void ConnectCellsOnLayer(Vector3Int start, Vector3Int end, int layer)
     {
         PriorityQueue<PathNode3D> openSet = new PriorityQueue<PathNode3D>();
         Dictionary<Vector3Int, Vector3Int> cameFrom = new Dictionary<Vector3Int, Vector3Int>();
         Dictionary<Vector3Int, float> gScore = new Dictionary<Vector3Int, float>();
 
-        openSet.Enqueue(new PathNode3D(start, 0), 0);
-        gScore[start] = 0;
+        Vector3Int s = new Vector3Int(start.x, layer, start.z);
+        Vector3Int e = new Vector3Int(end.x, layer, end.z);
+
+        openSet.Enqueue(new PathNode3D(s, 0), 0);
+        gScore[s] = 0;
 
         Vector3Int[] dirs = {
-            new Vector3Int(0, 0, 1),   // N
-            new Vector3Int(0, 0, -1),  // S
-            new Vector3Int(1, 0, 0),   // E
-            new Vector3Int(-1, 0, 0)   // W
+            new Vector3Int(0, 0, 1),
+            new Vector3Int(0, 0, -1),
+            new Vector3Int(1, 0, 0),
+            new Vector3Int(-1, 0, 0)
         };
 
         bool pathFound = false;
@@ -291,7 +479,7 @@ public class GridDungeonGenerator : MonoBehaviour
         {
             PathNode3D current = openSet.Dequeue();
 
-            if (current.Position == end)
+            if (current.Position == e)
             {
                 pathFound = true;
                 break;
@@ -300,14 +488,35 @@ public class GridDungeonGenerator : MonoBehaviour
             foreach (var dir in dirs)
             {
                 Vector3Int neighbor = current.Position + dir;
+                neighbor.y = layer; // Stay on the same connection layer
+
                 if (neighbor.x < 1 || neighbor.x >= width - 1 || neighbor.z < 1 || neighbor.z >= height - 1)
                     continue;
 
                 float cost = 1.0f;
-                CellType nType = grid[neighbor.x, neighbor.y, neighbor.z].type;
-                if (nType == CellType.Corridor || nType == CellType.Room)
+                CellType nType = grid[neighbor.x, layer, neighbor.z].type;
+
+                // Prevent pathfinding from crossing through room interiors (which causes dead-ends due to solid walls).
+                // Pathfinding must stay on Empty space or existing Corridors.
+                if (nType == CellType.Room)
                 {
-                    cost = 0.1f;
+                    if (neighbor != s && neighbor != e)
+                    {
+                        continue; // Block pathing through room interiors
+                    }
+                }
+
+                if (nType == CellType.Corridor || nType == CellType.Doorway)
+                {
+                    cost = 0.1f; // Prefer merging with existing corridors
+                }
+                else if (nType == CellType.Empty)
+                {
+                    cost = 1.0f;
+                }
+                else
+                {
+                    continue; // Block other types like Stairs/Empty boundary exceptions
                 }
 
                 float tentativeGScore = gScore[current.Position] + cost;
@@ -315,7 +524,7 @@ public class GridDungeonGenerator : MonoBehaviour
                 {
                     cameFrom[neighbor] = current.Position;
                     gScore[neighbor] = tentativeGScore;
-                    float h = Vector3.Distance(new Vector3(neighbor.x, neighbor.y * cellHeight, neighbor.z), new Vector3(end.x, end.y * cellHeight, end.z));
+                    float h = Vector3.Distance(neighbor, e);
                     openSet.Enqueue(new PathNode3D(neighbor, tentativeGScore), tentativeGScore + h);
                 }
             }
@@ -323,12 +532,14 @@ public class GridDungeonGenerator : MonoBehaviour
 
         if (pathFound)
         {
-            Vector3Int curr = end;
-            while (curr != start)
+            Vector3Int curr = e;
+            while (curr != s)
             {
                 if (grid[curr.x, curr.y, curr.z].type == CellType.Empty)
                 {
                     grid[curr.x, curr.y, curr.z].type = CellType.Corridor;
+                    grid[curr.x, curr.y, curr.z].hasFloor = true;
+                    grid[curr.x, curr.y, curr.z].hasCeiling = true;
                 }
                 curr = cameFrom[curr];
             }
@@ -343,731 +554,127 @@ public class GridDungeonGenerator : MonoBehaviour
             {
                 for (int z = 0; z < height; z++)
                 {
-                    Vector3 cellCenter = new Vector3(x * cellSize, y * cellHeight, z * cellSize);
                     DungeonCell cell = grid[x, y, z];
+                    if (cell.type == CellType.Empty) continue;
 
-                    if (y > 0 && grid[x, y - 1, z].type == CellType.Stairs)
-                    {
-                        // Skip normal room/corridor instantiation for the cell directly above the stairs
-                        continue;
-                    }
+                    Vector3 center = new Vector3(x * cellSize, y * cellHeight, z * cellSize);
 
-                    if (cell.type == CellType.Room)
+                    // 1. Floor Placement
+                    if (cell.hasFloor)
                     {
-                        InstantiateRoom(x, y, z, cellCenter);
-                    }
-                    else if (cell.type == CellType.Corridor)
-                    {
-                        CorridorStyle style = GetCellCorridorStyle(x, y, z);
-                        if (style == CorridorStyle.CircularTunnel)
+                        GameObject floorPref = GetFloorPrefabForCell(x, y, z);
+                        if (floorPref != null)
                         {
-                            InstantiateCorridor(x, y, z, cellCenter);
-                        }
-                        else
-                        {
-                            InstantiateSquareCorridor(x, y, z, cellCenter);
-                        }
-                    }
-                    else if (cell.type == CellType.Stairs)
-                    {
-                        InstantiateStairs(x, y, z, cellCenter);
-                    }
-                }
-            }
-        }
-    }
-
-    private void InstantiateRoom(int x, int y, int z, Vector3 center)
-    {
-        DungeonCell cell = grid[x, y, z];
-
-        // 1. Spawn Floor (if hasFloor is true)
-        if (cell.hasFloor)
-        {
-            GameObject floorPref = GetCellFloorPrefab(x, y, z);
-            if (floorPref != null)
-            {
-                float floorYOffset = 0.001f * ((x + z) % 2);
-                Vector3 floorPos = center + new Vector3(0, floorYOffset, 0);
-                GameObject floor = Instantiate(floorPref, floorPos, Quaternion.identity, transform);
-                floor.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
-                generatedObjects.Add(floor);
-            }
-        }
-
-        // 2. Spawn Ceiling (if hasCeiling is true)
-        if (cell.hasCeiling)
-        {
-            GameObject ceilingPref = GetCellCeilingPrefab(x, y, z);
-            if (ceilingPref != null)
-            {
-                float ceilingYOffset = 0.001f * ((x + z) % 2);
-                Vector3 ceilingPos = center + new Vector3(0, cellHeight - 0.02f + ceilingYOffset, 0); // Offset downward by 2cm to avoid floor z-fighting
-                GameObject ceiling = Instantiate(ceilingPref, ceilingPos, Quaternion.Euler(180, 0, 0), transform);
-                ceiling.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
-                generatedObjects.Add(ceiling);
-            }
-        }
-
-        // 3. Spawn Walls / Doorways along the 6m boundaries
-        // North boundary (Z = +3m)
-        SpawnRoomBoundary(x, y, z, center, new Vector2Int(0, 1), new Vector3(0, 0, cellSize * 0.5f), Quaternion.Euler(0, 180, 0));
-
-        // South boundary (Z = -3m)
-        SpawnRoomBoundary(x, y, z, center, new Vector2Int(0, -1), new Vector3(0, 0, -cellSize * 0.5f), Quaternion.Euler(0, 0, 0));
-
-        // East boundary (X = +3m)
-        SpawnRoomBoundary(x, y, z, center, new Vector2Int(1, 0), new Vector3(cellSize * 0.5f, 0, 0), Quaternion.Euler(0, 270, 0));
-
-        // West boundary (X = -3m)
-        SpawnRoomBoundary(x, y, z, center, new Vector2Int(-1, 0), new Vector3(-cellSize * 0.5f, 0, 0), Quaternion.Euler(0, 90, 0));
-    }
-
-    private void SpawnRoomBoundary(int x, int y, int z, Vector3 center, Vector2Int dir, Vector3 offset, Quaternion rotation)
-    {
-        int nx = x + dir.x;
-        int nz = z + dir.y;
-
-        CellType neighborType = CellType.Empty;
-        if (nx >= 0 && nx < width && nz >= 0 && nz < height)
-        {
-            neighborType = grid[nx, y, nz].type;
-        }
-
-        // 1. If current cell is directly above a Stairs cell, it's the stairs upper shaft
-        if (y > 0 && grid[x, y - 1, z].type == CellType.Stairs)
-        {
-            return; // Boundaries of the upper stairs shaft are handled by neighbors or InstantiateStairs
-        }
-
-        // Compute wall normal offset to resolve parallel wall z-fighting
-        Vector3 wallNormal = new Vector3(dir.x, 0, dir.y);
-        float wallOffsetVal = 0f; // Set to 0 to prevent 1mm offset seams!
-        Vector3 finalOffset = offset + wallNormal * wallOffsetVal;
-
-        // 2. If neighbor is the upper cell of stairs
-        if (y > 0 && nx >= 0 && nx < width && nz >= 0 && nz < height && grid[nx, y - 1, nz].type == CellType.Stairs)
-        {
-            if (!IsStairsUpperExit(nx, y - 1, nz, x, y, z))
-            {
-                GameObject wallPref = GetCellWallPrefab(x, y, z);
-                if (wallPref != null)
-                {
-                    GameObject wall = Instantiate(wallPref, center + finalOffset, rotation, transform);
-                    wall.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
-                    generatedObjects.Add(wall);
-                    // Spawn pillars at both ends of this wall to cover seams!
-                    SpawnDoorwayCornersPillars(x, y, z, center, dir);
-                }
-            }
-            else
-            {
-                // It is the exit of the stairs! Spawn a doorway transition into the room
-                GameObject doorwayPref = GetCellDoorwayPrefab(x, y, z);
-                if (doorwayPref != null)
-                {
-                    GameObject doorway = Instantiate(doorwayPref, center + finalOffset, rotation, transform);
-                    if (doorwayPref.name.ToLower().Contains("arc"))
-                    {
-                        doorway.transform.localScale = new Vector3(2.12f, 1.0f, 1.56f);
-                    }
-                    else
-                    {
-                        doorway.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
-                    }
-                    if (doorwayPref.name.Contains("doorway") || doorwayPref.name.Contains("arc"))
-                    {
-                        doorway.AddComponent<PhysicalDoor>();
-                    }
-                    generatedObjects.Add(doorway);
-                    
-                    // Spawn support pillars to cover seams between the doorframe columns and adjacent walls
-                    SpawnDoorwayCornersPillars(x, y, z, center, dir);
-                }
-            }
-            return;
-        }
-
-        // Merge adjacent Room cells seamlessly. Place walls/doorways only if not adjacent to another Room.
-        if (neighborType == CellType.Room)
-        {
-            return;
-        }
-        else if (neighborType == CellType.Corridor || neighborType == CellType.Stairs)
-        {
-            // If neighbor is Stairs, check if this boundary is the entrance to the stairs
-            if (neighborType == CellType.Stairs)
-            {
-                float rotY = grid[nx, y, nz].rotation;
-                Vector3Int forwardDir = Vector3Int.RoundToInt(Quaternion.Euler(0, rotY, 0) * Vector3.forward);
-                Vector3Int relativeDir = new Vector3Int(x - nx, 0, z - nz); // from stairs to room
-                
-                // Entrance is at -forwardDir. If we are not at the entrance, spawn a wall instead of a doorway!
-                if (relativeDir != -forwardDir)
-                {
-                    GameObject wallPref = GetCellWallPrefab(x, y, z);
-                    if (wallPref != null)
-                    {
-                        GameObject wall = Instantiate(wallPref, center + finalOffset, rotation, transform);
-                        wall.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
-                        generatedObjects.Add(wall);
-                        // Spawn pillars at both ends of this wall to cover seams!
-                        SpawnDoorwayCornersPillars(x, y, z, center, dir);
-                    }
-                    return;
-                }
-            }
-
-            GameObject doorwayPref = GetCellDoorwayPrefab(x, y, z);
-            if (doorwayPref != null)
-            {
-                GameObject doorway = Instantiate(doorwayPref, center + finalOffset, rotation, transform);
-                if (doorwayPref.name.ToLower().Contains("arc"))
-                {
-                    doorway.transform.localScale = new Vector3(2.12f, 1.0f, 1.56f);
-                }
-                else
-                {
-                    doorway.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
-                }
-                if (doorwayPref.name.Contains("doorway") || doorwayPref.name.Contains("arc"))
-                {
-                    doorway.AddComponent<PhysicalDoor>();
-                }
-                generatedObjects.Add(doorway);
-
-                // Spawn support pillars to cover seams between the doorframe columns and adjacent walls
-                SpawnDoorwayCornersPillars(x, y, z, center, dir);
-            }
-        }
-        else
-        {
-            if (y > 0 && grid[nx, y - 1, nz].type == CellType.Stairs)
-            {
-                return; // Do not spawn a wall blocking the stairs exit!
-            }
-
-            GameObject wallPref = GetCellWallPrefab(x, y, z);
-            if (wallPref != null)
-            {
-                GameObject wall = Instantiate(wallPref, center + finalOffset, rotation, transform);
-                wall.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
-                generatedObjects.Add(wall);
-                // Spawn pillars at both ends of this wall to cover seams!
-                SpawnDoorwayCornersPillars(x, y, z, center, dir);
-            }
-        }
-    }
-
-    private void InstantiateSquareCorridor(int x, int y, int z, Vector3 center)
-    {
-        DungeonCell cell = grid[x, y, z];
-
-        // 1. Spawn Floor
-        if (cell.hasFloor)
-        {
-            GameObject floorPref = GetCellFloorPrefab(x, y, z);
-            if (floorPref != null)
-            {
-                float floorYOffset = 0.001f * ((x + z) % 2);
-                Vector3 floorPos = center + new Vector3(0, floorYOffset, 0);
-                GameObject floor = Instantiate(floorPref, floorPos, Quaternion.identity, transform);
-                floor.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
-                generatedObjects.Add(floor);
-            }
-        }
-
-        // 2. Spawn Ceiling
-        if (cell.hasCeiling)
-        {
-            GameObject ceilingPref = GetCellCeilingPrefab(x, y, z);
-            if (ceilingPref != null)
-            {
-                float ceilingYOffset = 0.001f * ((x + z) % 2);
-                Vector3 ceilingPos = center + new Vector3(0, cellHeight - 0.02f + ceilingYOffset, 0); // Offset downward by 2cm to avoid floor z-fighting
-                GameObject ceiling = Instantiate(ceilingPref, ceilingPos, Quaternion.Euler(180, 0, 0), transform);
-                ceiling.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
-                generatedObjects.Add(ceiling);
-            }
-        }
-
-        // 3. Spawn Walls / Doorways along the 6m boundaries
-        // North boundary (Z = +3m)
-        SpawnCorridorBoundary(x, y, z, center, new Vector2Int(0, 1), new Vector3(0, 0, cellSize * 0.5f), Quaternion.Euler(0, 180, 0));
-
-        // South boundary (Z = -3m)
-        SpawnCorridorBoundary(x, y, z, center, new Vector2Int(0, -1), new Vector3(0, 0, -cellSize * 0.5f), Quaternion.Euler(0, 0, 0));
-
-        // East boundary (X = +3m)
-        SpawnCorridorBoundary(x, y, z, center, new Vector2Int(1, 0), new Vector3(cellSize * 0.5f, 0, 0), Quaternion.Euler(0, 270, 0));
-
-        // West boundary (X = -3m)
-        SpawnCorridorBoundary(x, y, z, center, new Vector2Int(-1, 0), new Vector3(-cellSize * 0.5f, 0, 0), Quaternion.Euler(0, 90, 0));
-    }
-
-    private void SpawnCorridorBoundary(int x, int y, int z, Vector3 center, Vector2Int dir, Vector3 offset, Quaternion rotation)
-    {
-        int nx = x + dir.x;
-        int nz = z + dir.y;
-
-        CellType neighborType = CellType.Empty;
-        if (nx >= 0 && nx < width && nz >= 0 && nz < height)
-        {
-            neighborType = grid[nx, y, nz].type;
-        }
-
-        // 1. If current cell is directly above a Stairs cell, it's the stairs upper shaft
-        if (y > 0 && grid[x, y - 1, z].type == CellType.Stairs)
-        {
-            return; // Boundaries of the upper stairs shaft are handled by neighbors or InstantiateStairs
-        }
-
-        // Compute wall normal offset to resolve parallel wall z-fighting
-        Vector3 wallNormal = new Vector3(dir.x, 0, dir.y);
-        float wallOffsetVal = 0f; // Set to 0 to prevent 1mm offset seams!
-        Vector3 finalOffset = offset + wallNormal * wallOffsetVal;
-
-        // 2. If neighbor is the upper cell of stairs
-        if (y > 0 && nx >= 0 && nx < width && nz >= 0 && nz < height && grid[nx, y - 1, nz].type == CellType.Stairs)
-        {
-            if (!IsStairsUpperExit(nx, y - 1, nz, x, y, z))
-            {
-                GameObject wallPref = GetCellWallPrefab(x, y, z);
-                if (wallPref != null)
-                {
-                    GameObject wall = Instantiate(wallPref, center + finalOffset, rotation, transform);
-                    wall.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
-                    generatedObjects.Add(wall);
-                    // Spawn pillars at both ends of this wall to cover seams!
-                    SpawnDoorwayCornersPillars(x, y, z, center, dir);
-                }
-            }
-            else
-            {
-                // It is the exit of the stairs! Spawn a doorway transition into the corridor
-                GameObject doorwayPref = GetCellDoorwayPrefab(x, y, z);
-                if (doorwayPref != null)
-                {
-                    GameObject doorway = Instantiate(doorwayPref, center + finalOffset, rotation, transform);
-                    if (doorwayPref.name.ToLower().Contains("arc"))
-                    {
-                        doorway.transform.localScale = new Vector3(2.12f, 1.0f, 1.56f);
-                    }
-                    else
-                    {
-                        doorway.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
-                    }
-                    if (doorwayPref.name.Contains("doorway") || doorwayPref.name.Contains("arc"))
-                    {
-                        doorway.AddComponent<PhysicalDoor>();
-                    }
-                    generatedObjects.Add(doorway);
-                    
-                    // Spawn support pillars to cover seams between the doorframe columns and adjacent walls
-                    SpawnDoorwayCornersPillars(x, y, z, center, dir);
-                }
-            }
-            return;
-        }
-
-        if (neighborType == CellType.Empty)
-        {
-            if (y > 0 && grid[nx, y - 1, nz].type == CellType.Stairs)
-            {
-                return; // Do not spawn a wall blocking the stairs exit!
-            }
-
-            GameObject wallPref = GetCellWallPrefab(x, y, z);
-            if (wallPref != null)
-            {
-                GameObject wall = Instantiate(wallPref, center + finalOffset, rotation, transform);
-                wall.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
-                generatedObjects.Add(wall);
-                // Spawn pillars at both ends of this wall to cover seams!
-                SpawnDoorwayCornersPillars(x, y, z, center, dir);
-            }
-        }
-        else if (neighborType == CellType.Corridor || neighborType == CellType.Stairs)
-        {
-            // If neighbor is Stairs, check if this boundary is the entrance to the stairs
-            if (neighborType == CellType.Stairs)
-            {
-                float rotY = grid[nx, y, nz].rotation;
-                Vector3Int forwardDir = Vector3Int.RoundToInt(Quaternion.Euler(0, rotY, 0) * Vector3.forward);
-                Vector3Int relativeDir = new Vector3Int(x - nx, 0, z - nz); // from stairs to corridor
-                
-                // Entrance is at -forwardDir. If we are not at the entrance, spawn a wall instead of a doorway/nothing!
-                if (relativeDir != -forwardDir)
-                {
-                    GameObject wallPref = GetCellWallPrefab(x, y, z);
-                    if (wallPref != null)
-                    {
-                        GameObject wall = Instantiate(wallPref, center + finalOffset, rotation, transform);
-                        wall.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
-                        generatedObjects.Add(wall);
-                        // Spawn pillars at both ends of this wall to cover seams!
-                        SpawnDoorwayCornersPillars(x, y, z, center, dir);
-                    }
-                    return;
-                }
-            }
-
-            // If the neighbor is a circular tunnel or a stairs entrance, spawn a doorway frame as a transition
-            if (GetCellCorridorStyle(nx, y, nz) == CorridorStyle.CircularTunnel || neighborType == CellType.Stairs)
-            {
-                GameObject doorwayPref = GetCellDoorwayPrefab(x, y, z);
-                if (doorwayPref != null)
-                {
-                    GameObject doorway = Instantiate(doorwayPref, center + finalOffset, rotation, transform);
-                    if (doorwayPref.name.ToLower().Contains("arc"))
-                    {
-                        doorway.transform.localScale = new Vector3(2.12f, 1.0f, 1.56f);
-                    }
-                    else
-                    {
-                        doorway.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
-                    }
-                    if (doorwayPref.name.Contains("doorway") || doorwayPref.name.Contains("arc"))
-                    {
-                        doorway.AddComponent<PhysicalDoor>();
-                    }
-                    generatedObjects.Add(doorway);
-
-                    // Spawn support pillars to cover seams between the doorframe columns and adjacent walls
-                    SpawnDoorwayCornersPillars(x, y, z, center, dir);
-                }
-            }
-        }
-    }
-
-    private void InstantiateCorridor(int x, int y, int z, Vector3 center)
-    {
-        bool N = IsConnected(x, y, z + 1);
-        bool S = IsConnected(x, y, z - 1);
-        bool E = IsConnected(x + 1, y, z);
-        bool W = IsConnected(x - 1, y, z);
-
-        int connectionsCount = (N ? 1 : 0) + (S ? 1 : 0) + (E ? 1 : 0) + (W ? 1 : 0);
-
-        if (connectionsCount == 0) return;
-
-        // Spawn exactly one unscaled tunnel piece centered in this cell
-        if (connectionsCount == 1)
-        {
-            if (N || S) SpawnTunnel(tunnelStraight, center, Quaternion.Euler(0, 0, 0));
-            else if (E || W) SpawnTunnel(tunnelStraight, center, Quaternion.Euler(0, 90, 0));
-        }
-        else if (connectionsCount == 2)
-        {
-            if (N && S) SpawnTunnel(tunnelStraight, center, Quaternion.Euler(0, 0, 0));
-            else if (E && W) SpawnTunnel(tunnelStraight, center, Quaternion.Euler(0, 90, 0));
-            else
-            {
-                if (W && N) SpawnTunnel(tunnelCorner, center, Quaternion.Euler(0, 0, 0));
-                else if (N && E) SpawnTunnel(tunnelCorner, center, Quaternion.Euler(0, 90, 0));
-                else if (E && S) SpawnTunnel(tunnelCorner, center, Quaternion.Euler(0, 180, 0));
-                else if (S && W) SpawnTunnel(tunnelCorner, center, Quaternion.Euler(0, 270, 0));
-            }
-        }
-        else if (connectionsCount == 3)
-        {
-            if (N && S && W) SpawnTunnel(tunnelTJunction, center, Quaternion.Euler(0, 0, 0));
-            else if (E && W && N) SpawnTunnel(tunnelTJunction, center, Quaternion.Euler(0, 90, 0));
-            else if (S && N && E) SpawnTunnel(tunnelTJunction, center, Quaternion.Euler(0, 180, 0));
-            else if (W && E && S) SpawnTunnel(tunnelTJunction, center, Quaternion.Euler(0, 270, 0));
-        }
-        else if (connectionsCount == 4)
-        {
-            SpawnTunnel(tunnelXJunction, center, Quaternion.identity);
-        }
-    }
-
-    private void SpawnTunnel(GameObject prefab, Vector3 position, Quaternion rotation)
-    {
-        if (prefab != null)
-        {
-            GameObject tunnelInstance = Instantiate(prefab, position, rotation, transform);
-            generatedObjects.Add(tunnelInstance);
-        }
-    }
-
-    private void InstantiateStairs(int x, int y, int z, Vector3 center)
-    {
-        DungeonCell cell = grid[x, y, z];
-        float rotY = cell.rotation;
-        Quaternion stairsRot = Quaternion.Euler(0, rotY, 0);
-        Vector3 riseDir = stairsRot * Vector3.forward;
-        Vector3 sideDir = stairsRot * Vector3.right;
-
-        // Choose stair prefab based on layer
-        GameObject activeStairsPrefab = (y % 2 == 0) ? stairsPrefab : (bunkerStairsPrefab != null ? bunkerStairsPrefab : stairsPrefab);
-
-        // 1. Spawn Stairs Prefab
-        if (activeStairsPrefab != null)
-        {
-            // Apply stairsModelRotationOffset to match the physical model to layout rise direction
-            Quaternion stairsInstanceRot = stairsRot * Quaternion.Euler(0, stairsRotationOffset, 0);
-            GameObject stairsInstance = Instantiate(activeStairsPrefab, center, stairsInstanceRot, transform);
-            
-            // Get the local bounds of the prefab mesh to align exactly with cell boundaries
-            float zMin = -2.0f;
-            float zMax = 2.0f;
-            float originalLength = 4.0f;
-            float originalWidth = 2.0f;
-            
-            MeshFilter[] meshFilters = stairsInstance.GetComponentsInChildren<MeshFilter>();
-            if (meshFilters.Length > 0)
-            {
-                Bounds combinedBounds = new Bounds(Vector3.zero, Vector3.zero);
-                bool hasBounds = false;
-                
-                foreach (var mf in meshFilters)
-                {
-                    if (mf.sharedMesh != null)
-                    {
-                        Bounds localB = mf.sharedMesh.bounds;
-                        Vector3[] corners = new Vector3[8];
-                        Vector3 ext = localB.extents;
-                        Vector3 cnt = localB.center;
-                        corners[0] = cnt + new Vector3(ext.x, ext.y, ext.z);
-                        corners[1] = cnt + new Vector3(ext.x, ext.y, -ext.z);
-                        corners[2] = cnt + new Vector3(ext.x, -ext.y, ext.z);
-                        corners[3] = cnt + new Vector3(ext.x, -ext.y, -ext.z);
-                        corners[4] = cnt - new Vector3(ext.x, ext.y, ext.z);
-                        corners[5] = cnt - new Vector3(ext.x, ext.y, -ext.z);
-                        corners[6] = cnt - new Vector3(ext.x, -ext.y, ext.z);
-                        corners[7] = cnt - new Vector3(ext.x, -ext.y, -ext.z);
-                        
-                        for (int i = 0; i < 8; i++)
-                        {
-                            Vector3 localCorner = stairsInstance.transform.InverseTransformPoint(mf.transform.TransformPoint(corners[i]));
-                            if (!hasBounds)
+                            float floorYOffset = 0.001f * ((x + z) % 2); // Micro Y-offset for Z-Fighting
+                            Vector3 floorPos = center + new Vector3(0, floorYOffset, 0);
+                            
+                            // Check if this is a raised platform border cell to apply modular foundation prefabs
+                            if (y > 0 && cell.type == CellType.Room)
                             {
-                                combinedBounds = new Bounds(localCorner, Vector3.zero);
-                                hasBounds = true;
+                                Room r = GetRoomById(cell.roomId);
+                                if (r != null && r.layersCount > 1)
+                                {
+                                    SpawnPlatformFloor(r, x, y, z, floorPos);
+                                }
+                                else
+                                {
+                                    SpawnStandardFloor(floorPref, floorPos);
+                                }
                             }
                             else
                             {
-                                combinedBounds.Encapsulate(localCorner);
+                                SpawnStandardFloor(floorPref, floorPos);
                             }
                         }
                     }
-                }
-                
-                if (hasBounds)
-                {
-                    zMin = combinedBounds.min.z;
-                    zMax = combinedBounds.max.z;
-                    originalLength = combinedBounds.size.z;
-                    originalWidth = combinedBounds.size.x;
-                }
-            }
 
-            // Scale dynamically: width matches cell width, length scaled to span full cell size (6.0m)
-            float lengthScale = cellSize / originalLength;
-            float widthScale = (originalWidth > 0.1f) ? (cellSize / originalWidth) : 1.5f;
-            
-            if (activeStairsPrefab.name.ToLower().Contains("stairs_5"))
-            {
-                widthScale = cellSize / 2.0f; // 3.0f
-            }
-            else
-            {
-                widthScale = 1.5f;
-            }
-
-            stairsInstance.transform.localScale = new Vector3(widthScale, 1.0f, lengthScale);
-            
-            // Translate along local Z axis to align bottom/top of stairs perfectly to cell boundaries (eliminating entrance gap)
-            float localZOffset = -cellSize * 0.5f - lengthScale * zMin;
-            stairsInstance.transform.position += stairsInstanceRot * new Vector3(0, 0, localZOffset);
-            
-            generatedObjects.Add(stairsInstance);
-        }
-
-        // 2. Spawn Floor under stairs (with checkerboard Y offset)
-        if (cell.hasFloor)
-        {
-            GameObject floorPref = GetCellFloorPrefab(x, y, z);
-            if (floorPref != null)
-            {
-                float floorYOffset = 0.001f * ((x + z) % 2);
-                Vector3 floorPos = center + new Vector3(0, floorYOffset, 0);
-                GameObject floor = Instantiate(floorPref, floorPos, Quaternion.identity, transform);
-                floor.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
-                generatedObjects.Add(floor);
-            }
-        }
-
-        // 3. Spawn Ceiling for the upper cell (above stairs, with checkerboard Y offset)
-        GameObject ceilingPref = GetCellCeilingPrefab(x, y + 1, z);
-        if (ceilingPref != null)
-        {
-            float ceilingYOffset = 0.001f * ((x + z) % 2);
-            Vector3 ceilingPos = center + new Vector3(0, cellHeight * 2.0f - 0.02f + ceilingYOffset, 0); // Offset downward by 2cm to avoid floor z-fighting
-            GameObject ceiling = Instantiate(ceilingPref, ceilingPos, Quaternion.Euler(180, 0, 0), transform);
-            ceiling.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
-            generatedObjects.Add(ceiling);
-        }
-
-        // 4. Spawn Enclosing Walls (only if adjacent cell is Empty/CircularTunnel/other non-wall-spawning cells to prevent duplicate z-fighting walls)
-        GameObject wallPref = GetCellWallPrefab(x, y, z);
-        if (wallPref != null)
-        {
-            Vector3Int vRiseDir = Vector3Int.RoundToInt(riseDir);
-            Vector3Int vSideDir = Vector3Int.RoundToInt(sideDir);
-
-            // East wall (Y = y)
-            if (ShouldSpawnStairsWall(x, y, z, vSideDir))
-            {
-                Vector3 wallPosE = center + sideDir * (cellSize * 0.5f);
-                GameObject wallE = Instantiate(wallPref, wallPosE, Quaternion.Euler(0, rotY - 90f, 0), transform);
-                wallE.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
-                generatedObjects.Add(wallE);
-            }
-
-            // West wall (Y = y)
-            if (ShouldSpawnStairsWall(x, y, z, -vSideDir))
-            {
-                Vector3 wallPosW = center - sideDir * (cellSize * 0.5f);
-                GameObject wallW = Instantiate(wallPref, wallPosW, Quaternion.Euler(0, rotY + 90f, 0), transform);
-                wallW.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
-                generatedObjects.Add(wallW);
-            }
-
-            // East upper wall (Y = y+1)
-            if (ShouldSpawnStairsWall(x, y, z, vSideDir + new Vector3Int(0, 1, 0)))
-            {
-                Vector3 wallPosE_up = center + sideDir * (cellSize * 0.5f) + new Vector3(0, cellHeight, 0);
-                GameObject wallE_up = Instantiate(wallPref, wallPosE_up, Quaternion.Euler(0, rotY - 90f, 0), transform);
-                wallE_up.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
-                generatedObjects.Add(wallE_up);
-            }
-
-            // West upper wall (Y = y+1)
-            if (ShouldSpawnStairsWall(x, y, z, -vSideDir + new Vector3Int(0, 1, 0)))
-            {
-                Vector3 wallPosW_up = center - sideDir * (cellSize * 0.5f) + new Vector3(0, cellHeight, 0);
-                GameObject wallW_up = Instantiate(wallPref, wallPosW_up, Quaternion.Euler(0, rotY + 90f, 0), transform);
-                wallW_up.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
-                generatedObjects.Add(wallW_up);
-            }
-
-            // North wall (Y = y) - under the high end of the stairs
-            if (ShouldSpawnStairsWall(x, y, z, vRiseDir))
-            {
-                Vector3 wallPosN = center + riseDir * (cellSize * 0.5f);
-                GameObject wallN = Instantiate(wallPref, wallPosN, Quaternion.Euler(0, rotY + 180f, 0), transform);
-                wallN.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
-                generatedObjects.Add(wallN);
-            }
-
-            // South wall (Y = y+1) - behind the low end of the stairs on the upper layer
-            if (ShouldSpawnStairsWall(x, y, z, -vRiseDir + new Vector3Int(0, 1, 0)))
-            {
-                Vector3 wallPosS_up = center - riseDir * (cellSize * 0.5f) + new Vector3(0, cellHeight, 0);
-                GameObject wallS_up = Instantiate(wallPref, wallPosS_up, Quaternion.Euler(0, rotY, 0), transform);
-                wallS_up.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
-                generatedObjects.Add(wallS_up);
-            }
-        }
-
-        // 5. Spawn Corner Support Pillars (seals gaps between doorframe/walls)
-        // Lower layer (Y = y) pillars
-        GameObject lowerPillarPref = (y % 2 == 0) ? pillarPrefab : (bunkerPillarPrefab != null ? bunkerPillarPrefab : pillarPrefab);
-        if (lowerPillarPref != null)
-        {
-            Vector3[] lowerCorners = new Vector3[] {
-                center - riseDir * (cellSize * 0.5f) - sideDir * (cellSize * 0.5f),
-                center - riseDir * (cellSize * 0.5f) + sideDir * (cellSize * 0.5f),
-                center + riseDir * (cellSize * 0.5f) - sideDir * (cellSize * 0.5f),
-                center + riseDir * (cellSize * 0.5f) + sideDir * (cellSize * 0.5f)
-            };
-            foreach (var pos in lowerCorners)
-            {
-                SpawnPillarAt(lowerPillarPref, pos);
-            }
-        }
-
-        // Upper layer (Y = y+1) pillars
-        GameObject upperPillarPref = ((y + 1) % 2 == 0) ? pillarPrefab : (bunkerPillarPrefab != null ? bunkerPillarPrefab : pillarPrefab);
-        if (upperPillarPref != null)
-        {
-            Vector3[] upperCorners = new Vector3[] {
-                center - riseDir * (cellSize * 0.5f) - sideDir * (cellSize * 0.5f) + new Vector3(0, cellHeight, 0),
-                center - riseDir * (cellSize * 0.5f) + sideDir * (cellSize * 0.5f) + new Vector3(0, cellHeight, 0),
-                center + riseDir * (cellSize * 0.5f) - sideDir * (cellSize * 0.5f) + new Vector3(0, cellHeight, 0),
-                center + riseDir * (cellSize * 0.5f) + sideDir * (cellSize * 0.5f) + new Vector3(0, cellHeight, 0)
-            };
-            foreach (var pos in upperCorners)
-            {
-                SpawnPillarAt(upperPillarPref, pos);
-            }
-        }
-
-        // 6. Spawn Transition Doorways and Pillars if adjacent to a Circular Tunnel
-        Vector3Int vRiseDir2 = Vector3Int.RoundToInt(riseDir);
-        
-        // Transition doorway at entrance
-        Vector3Int entranceCoord = new Vector3Int(x - vRiseDir2.x, y, z - vRiseDir2.z);
-        if (entranceCoord.x >= 0 && entranceCoord.x < width && entranceCoord.z >= 0 && entranceCoord.z < height)
-        {
-            if (grid[entranceCoord.x, y, entranceCoord.z].type == CellType.Corridor && 
-                GetCellCorridorStyle(entranceCoord.x, y, entranceCoord.z) == CorridorStyle.CircularTunnel)
-            {
-                GameObject doorwayPref = GetCellDoorwayPrefab(x, y, z);
-                if (doorwayPref != null)
-                {
-                    float wallOffsetVal = 0f;
-                    Vector3 doorwayPos = center - riseDir * (cellSize * 0.5f) - riseDir * wallOffsetVal;
-                    GameObject doorway = Instantiate(doorwayPref, doorwayPos, Quaternion.Euler(0, rotY, 0), transform);
-                    if (doorwayPref.name.ToLower().Contains("arc"))
+                    // 2. Ceiling Placement
+                    if (cell.hasCeiling)
                     {
-                        doorway.transform.localScale = new Vector3(2.12f, 1.0f, 1.56f);
+                        GameObject ceilingPref = GetCeilingPrefabForCell(x, y, z);
+                        if (ceilingPref != null)
+                        {
+                            float ceilingYOffset = 0.001f * ((x + z) % 2);
+                            Vector3 ceilingPos = center + new Vector3(0, cellHeight - 0.02f + ceilingYOffset, 0);
+                            GameObject ceiling = Instantiate(ceilingPref, ceilingPos, Quaternion.Euler(180, 0, 0), transform);
+                            ceiling.transform.localScale = prefabScale;
+                            generatedObjects.Add(ceiling);
+                        }
                     }
-                    else
-                    {
-                        doorway.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
-                    }
-                    generatedObjects.Add(doorway);
-                    
-                    SpawnDoorwayCornersPillars(x, y, z, center, -new Vector2Int(vRiseDir2.x, vRiseDir2.z));
+
+                    // 3. Wall and Doorway Boundaries
+                    // North (Z = +2m)
+                    SpawnCellBoundary(x, y, z, center, new Vector2Int(0, 1), new Vector3(0, 0, cellSize * 0.5f), Quaternion.Euler(0, 180, 0));
+                    // South (Z = -2m)
+                    SpawnCellBoundary(x, y, z, center, new Vector2Int(0, -1), new Vector3(0, 0, -cellSize * 0.5f), Quaternion.Euler(0, 0, 0));
+                    // East (X = +2m)
+                    SpawnCellBoundary(x, y, z, center, new Vector2Int(1, 0), new Vector3(cellSize * 0.5f, 0, 0), Quaternion.Euler(0, 270, 0));
+                    // West (X = -2m)
+                    SpawnCellBoundary(x, y, z, center, new Vector2Int(-1, 0), new Vector3(-cellSize * 0.5f, 0, 0), Quaternion.Euler(0, 90, 0));
                 }
             }
         }
+    }
 
-        // Transition doorway at exit
-        Vector3Int exitCoord = new Vector3Int(x + vRiseDir2.x, y + 1, z + vRiseDir2.z);
-        if (exitCoord.x >= 0 && exitCoord.x < width && exitCoord.z >= 0 && exitCoord.z < height)
+    private void SpawnStandardFloor(GameObject floorPref, Vector3 pos)
+    {
+        GameObject floor = Instantiate(floorPref, pos, Quaternion.identity, transform);
+        floor.transform.localScale = prefabScale;
+        generatedObjects.Add(floor);
+    }
+
+    private void SpawnPlatformFloor(Room r, int x, int y, int z, Vector3 pos)
+    {
+#if UNITY_EDITOR
+        // Determine edge adjacency on the platform layer Y
+        bool N = (z + 1 < height) && grid[x, y, z + 1].roomId == r.id && grid[x, y, z + 1].hasFloor;
+        bool S = (z - 1 >= 0) && grid[x, y, z - 1].roomId == r.id && grid[x, y, z - 1].hasFloor;
+        bool E = (x + 1 < width) && grid[x + 1, y, z].roomId == r.id && grid[x + 1, y, z].hasFloor;
+        bool W = (x - 1 >= 0) && grid[x - 1, y, z].roomId == r.id && grid[x - 1, y, z].hasFloor;
+
+        int connections = (N ? 1 : 0) + (S ? 1 : 0) + (E ? 1 : 0) + (W ? 1 : 0);
+
+        GameObject cornerPrefab = LoadPrefab("floor_foundation_corner");
+        GameObject frontPrefab = LoadPrefab("floor_foundation_front");
+        GameObject normalPrefab = GetFloorPrefabForCell(x, y, z);
+
+        if (connections == 2)
         {
-            if (grid[exitCoord.x, y + 1, exitCoord.z].type == CellType.Corridor && 
-                GetCellCorridorStyle(exitCoord.x, y + 1, exitCoord.z) == CorridorStyle.CircularTunnel)
-            {
-                GameObject doorwayPref = GetCellDoorwayPrefab(x, y + 1, z);
-                if (doorwayPref != null)
-                {
-                    float wallOffsetVal = 0f;
-                    Vector3 doorwayPos = center + riseDir * (cellSize * 0.5f) + new Vector3(0, cellHeight, 0) + riseDir * wallOffsetVal;
-                    GameObject doorway = Instantiate(doorwayPref, doorwayPos, Quaternion.Euler(0, rotY + 180f, 0), transform);
-                    if (doorwayPref.name.ToLower().Contains("arc"))
-                    {
-                        doorway.transform.localScale = new Vector3(2.12f, 1.0f, 1.56f);
-                    }
-                    else
-                    {
-                        doorway.transform.localScale = new Vector3(1.56f, 1.0f, 1.56f);
-                    }
-                    generatedObjects.Add(doorway);
-                    
-                    SpawnDoorwayCornersPillars(x, y + 1, z, center + new Vector3(0, cellHeight, 0), new Vector2Int(vRiseDir2.x, vRiseDir2.z));
-                }
-            }
+            // Corner platform blocks
+            if (E && N) SpawnFoundationPiece(cornerPrefab, pos, 0f);
+            else if (S && E) SpawnFoundationPiece(cornerPrefab, pos, 90f);
+            else if (W && S) SpawnFoundationPiece(cornerPrefab, pos, 180f);
+            else if (N && W) SpawnFoundationPiece(cornerPrefab, pos, 270f);
+            else SpawnStandardFloor(normalPrefab, pos);
         }
+        else if (connections == 3)
+        {
+            // Front edge platform blocks
+            if (W && N && E) SpawnFoundationPiece(frontPrefab, pos, 0f); // flat on South
+            else if (N && E && S) SpawnFoundationPiece(frontPrefab, pos, 90f); // flat on West
+            else if (E && S && W) SpawnFoundationPiece(frontPrefab, pos, 180f); // flat on North
+            else if (S && W && N) SpawnFoundationPiece(frontPrefab, pos, 270f); // flat on East
+            else SpawnStandardFloor(normalPrefab, pos);
+        }
+        else
+        {
+            SpawnStandardFloor(normalPrefab, pos);
+        }
+#else
+        SpawnStandardFloor(GetFloorPrefabForCell(x, y, z), pos);
+#endif
+    }
+
+    private void SpawnFoundationPiece(GameObject prefab, Vector3 pos, float rotationY)
+    {
+        if (prefab == null) return;
+        GameObject instance = Instantiate(prefab, pos, Quaternion.Euler(0, rotationY, 0), transform);
+        instance.transform.localScale = Vector3.one;
+        generatedObjects.Add(instance);
     }
 
     private bool IsStairsUpperExit(int stairsX, int stairsY, int stairsZ, int targetX, int targetY, int targetZ)
     {
-        if (grid == null) return false;
         if (stairsX < 0 || stairsX >= width || stairsY < 0 || stairsY >= layers || stairsZ < 0 || stairsZ >= height) return false;
         if (grid[stairsX, stairsY, stairsZ].type != CellType.Stairs) return false;
         float rotY = grid[stairsX, stairsY, stairsZ].rotation;
@@ -1076,123 +683,724 @@ public class GridDungeonGenerator : MonoBehaviour
         return (targetX == stairsX + riseDir.x && targetY == stairsY + 1 && targetZ == stairsZ + riseDir.z);
     }
 
-    private bool ShouldSpawnStairsWall(int sx, int sy, int sz, Vector3Int dir)
+    private bool IsStairsLowerEntrance(int stairsX, int stairsY, int stairsZ, int targetX, int targetY, int targetZ)
     {
-        int nx = sx + dir.x;
-        int ny = sy + dir.y;
-        int nz = sz + dir.z;
+        if (stairsX < 0 || stairsX >= width || stairsY < 0 || stairsY >= layers || stairsZ < 0 || stairsZ >= height) return false;
+        if (grid[stairsX, stairsY, stairsZ].type != CellType.Stairs) return false;
+        float rotY = grid[stairsX, stairsY, stairsZ].rotation;
+        Quaternion stairsRot = Quaternion.Euler(0, rotY, 0);
+        Vector3Int riseDir = Vector3Int.RoundToInt(stairsRot * Vector3.forward);
+        return (targetX == stairsX - riseDir.x && targetY == stairsY && targetZ == stairsZ - riseDir.z);
+    }
 
-        if (nx < 0 || nx >= width || ny < 0 || ny >= layers || nz < 0 || nz >= height)
+    private void SpawnCellBoundary(int x, int y, int z, Vector3 center, Vector2Int dir, Vector3 offset, Quaternion rotation)
+    {
+        int nx = x + dir.x;
+        int nz = z + dir.y;
+
+        CellType neighborType = CellType.Empty;
+        int neighborRoomId = 0;
+        bool isOutBounds = false;
+        if (nx < 0 || nx >= width || nz < 0 || nz >= height)
         {
-            return true; // Out of bounds, spawn a wall
+            isOutBounds = true;
+        }
+        else
+        {
+            neighborType = grid[nx, y, nz].type;
+            neighborRoomId = grid[nx, y, nz].roomId;
         }
 
-        if (grid == null) return true;
+        DungeonCell cell = grid[x, y, z];
 
-        DungeonCell neighbor = grid[nx, ny, nz];
-        bool isRoom = neighbor.type == CellType.Room;
-        bool isSquareCorridor = neighbor.type == CellType.Corridor && GetCellCorridorStyle(nx, ny, nz) == CorridorStyle.SquareCorridor;
+        // 1. If currently in Stairs, we don't spawn any wall (stairs_walled prefab already includes wall structure)
+        if (cell.type == CellType.Stairs)
+        {
+            return;
+        }
 
-        return !(isRoom || isSquareCorridor);
+        // Convert to logical type (treating Doorway as Room area)
+        CellType logicalCellType = (cell.type == CellType.Doorway) ? CellType.Room : cell.type;
+        CellType logicalNeighborType = (neighborType == CellType.Doorway) ? CellType.Room : neighborType;
+
+        // 2. Determine if neighbor is empty space (void)
+        bool isNeighborEmpty = (isOutBounds || neighborType == CellType.Empty);
+        if (!isNeighborEmpty)
+        {
+            // Case A: Neighbor is Stairs
+            if (neighborType == CellType.Stairs)
+            {
+                // If currently at the upper exit (at y = stairsY + 1) or lower entrance (at y = stairsY), do not spawn wall.
+                if ((y > 0 && IsStairsUpperExit(nx, y - 1, nz, x, y, z)) || 
+                    (IsStairsLowerEntrance(nx, y, nz, x, y, z)))
+                {
+                    return;
+                }
+            }
+            // Case B: Both are Corridor
+            else if (logicalCellType == CellType.Corridor && logicalNeighborType == CellType.Corridor)
+            {
+                return;
+            }
+            // Case C: Both are Room-like
+            else if (logicalCellType == CellType.Room && logicalNeighborType == CellType.Room)
+            {
+                if (cell.roomId == neighborRoomId) return; // Same room (e.g. Doorway connecting to its own Room cell)
+                if (cell.roomId > neighborRoomId) return;  // Different room: only smaller roomId spawns
+            }
+            // Case D: One is Room-like, one is Corridor
+            else
+            {
+                if (logicalCellType == CellType.Corridor && logicalNeighborType == CellType.Room)
+                {
+                    // Corridor facing Room-like: let Room-like handle it
+                    return;
+                }
+            }
+        }
+
+        // 3. Determine if we need to spawn a doorway or wall
+        bool isDoorwayBoundary = false;
+        if (cell.type == CellType.Doorway)
+        {
+            Room r = GetRoomById(cell.roomId);
+            if (r != null)
+            {
+                // Check if this cell is on the room boundary where entrance/exit sits
+                Vector3Int pos = new Vector3Int(x, y, z);
+                if (r.entrancePoints.Contains(pos) && dir == new Vector2Int(-1, 0)) isDoorwayBoundary = true;
+                if (r.exitPoints.Contains(pos) && dir == new Vector2Int(1, 0)) isDoorwayBoundary = true;
+            }
+        }
+
+        if (isDoorwayBoundary)
+        {
+            // Defensive check: if the neighbour is empty space (void), do not spawn a doorway.
+            // Spawn a wall instead to prevent doors opening directly to the void.
+            if (isNeighborEmpty)
+            {
+                isDoorwayBoundary = false;
+            }
+        }
+
+        if (isDoorwayBoundary)
+        {
+            GameObject doorwayPref = GetDoorwayPrefabForCell(x, y, z);
+            if (doorwayPref != null)
+            {
+                GameObject doorway = Instantiate(doorwayPref, center + offset, rotation, transform);
+                doorway.transform.localScale = prefabScale;
+                if (doorway.GetComponent<PhysicalDoor>() == null && (doorway.name.Contains("doorway") || doorway.name.Contains("arc")))
+                {
+                    doorway.AddComponent<PhysicalDoor>();
+                }
+                generatedObjects.Add(doorway);
+                
+                // Spawn support pillars removed (no seams/gaps in this prefab set)
+            }
+        }
+        else
+        {
+            GameObject wallPref = GetWallPrefabForCell(x, y, z);
+            if (wallPref != null)
+            {
+                GameObject wall = Instantiate(wallPref, center + offset, rotation, transform);
+                wall.transform.localScale = prefabScale;
+                generatedObjects.Add(wall);
+
+                // Add corner pillars removed (no seams/gaps in this prefab set)
+            }
+        }
     }
 
-    private bool IsConnected(int x, int y, int z)
+    private void SpawnDoorwayCornersPillars(int x, int y, int z, Vector3 center, Vector2Int dir)
     {
-        if (x < 0 || x >= width || z < 0 || z >= height) return false;
-        CellType type = grid[x, y, z].type;
-        return type == CellType.Room || type == CellType.Corridor || type == CellType.Stairs;
+        // Removed: No support pillars needed for the current prefab set.
+        return;
     }
 
-    private CorridorStyle GetCellCorridorStyle(int x, int y, int z)
+    private void SpawnPillarAt(GameObject prefab, Vector3 pos)
     {
-        if (x < 0 || x >= width || z < 0 || z >= height) return corridorStyle;
-        if (grid[x, y, z].type != CellType.Corridor) return corridorStyle;
+        if (prefab == null) return;
+        Vector3 key = new Vector3(
+            Mathf.Round(pos.x * 100f) / 100f,
+            Mathf.Round(pos.y * 100f) / 100f,
+            Mathf.Round(pos.z * 100f) / 100f
+        );
+
+        if (spawnedPillarPositions.Contains(key)) return;
+
+        GameObject pillar = Instantiate(prefab, pos, Quaternion.identity, transform);
+        generatedObjects.Add(pillar);
+        spawnedPillarPositions.Add(key);
+    }
+
+    // Decorate room depending on its themes using pre-generated prefabs
+    private void DecorateRoom(Room r)
+    {
+#if UNITY_EDITOR
+        switch (r.theme)
+        {
+            case "DividingHall":
+                DecorateDividingHall(r);
+                break;
+            case "JailCells":
+                DecorateJailCells(r);
+                break;
+            case "Cellar":
+                DecorateCellar(r);
+                break;
+            case "GuardPost":
+                DecorateGuardPost(r);
+                break;
+            case "MageLibrary":
+                DecorateMageLibrary(r);
+                break;
+            case "GoldTreasury":
+                DecorateGoldTreasury(r);
+                break;
+            case "SewerDock":
+                DecorateSewerDock(r);
+                break;
+            case "CastleHall":
+                DecorateCastleHall(r);
+                break;
+            case "MineShaft":
+                DecorateMineShaft(r);
+                break;
+            case "LivingQuarters":
+                DecorateLivingQuarters(r);
+                break;
+            case "TreasureVault":
+                DecorateTreasureVault(r);
+                break;
+        }
+#endif
+    }
+
+#if UNITY_EDITOR
+    private void DecorateDividingHall(Room r)
+    {
+        // 1. Dirt corners floor tiles (with minor Y-offset to prevent Z-fighting)
+        GameObject dirtCorner = LoadPrefab("floor_dirt_small_corner");
+        if (dirtCorner != null)
+        {
+            float yOffset = 0.01f;
+            InstantiateDecor(dirtCorner, new Vector3(r.x * cellSize, r.y * cellHeight + yOffset, r.z * cellSize), 0f);
+            InstantiateDecor(dirtCorner, new Vector3((r.x + 2) * cellSize, r.y * cellHeight + yOffset, r.z * cellSize), 90f);
+            InstantiateDecor(dirtCorner, new Vector3((r.x + 2) * cellSize, r.y * cellHeight + yOffset, (r.z + 2) * cellSize), 180f);
+            InstantiateDecor(dirtCorner, new Vector3(r.x * cellSize, r.y * cellHeight + yOffset, (r.z + 2) * cellSize), 270f);
+        }
+
+        // 2. Central half-wall divider
+        GameObject halfWall = LoadPrefab("wall_half_endcap");
+        if (halfWall != null)
+        {
+            InstantiateDecor(halfWall, new Vector3((r.x + 1) * cellSize, r.y * cellHeight, (r.z + 1) * cellSize - 1.0f), 90f);
+        }
+
+        // 3. Railing barriers and storage props in dirt corners (with column end-caps)
+        GameObject barrier = LoadPrefab("barrier");
+        GameObject column = LoadPrefab("column");
+        if (barrier != null)
+        {
+            InstantiateDecor(barrier, new Vector3(r.x * cellSize + 2.0f, r.y * cellHeight, r.z * cellSize), 90f);
+        }
+        if (column != null)
+        {
+            InstantiateDecor(column, new Vector3(r.x * cellSize + 2.0f, r.y * cellHeight, r.z * cellSize - 2.0f), 0f);
+            InstantiateDecor(column, new Vector3(r.x * cellSize + 2.0f, r.y * cellHeight, r.z * cellSize + 2.0f), 0f);
+        }
+
+        GameObject barrelStack = LoadPrefab("barrel_small_stack");
+        GameObject crateStack = LoadPrefab("crates_stacked");
+        if (barrelStack != null) InstantiateDecor(barrelStack, new Vector3(r.x * cellSize + 1f, r.y * cellHeight, r.z * cellSize + 0.5f), 0f);
+        if (crateStack != null) InstantiateDecor(crateStack, new Vector3((r.x + 2) * cellSize - 0.5f, r.y * cellHeight, (r.z + 2) * cellSize - 0.5f), 45f);
+
+        // Central chest loot
+        GameObject chest = LoadPrefab("chest");
+        if (chest != null)
+        {
+            InstantiateDecor(chest, new Vector3((r.x + 1) * cellSize, r.y * cellHeight, (r.z + 1) * cellSize + 1.0f), 180f);
+        }
+    }
+
+    private void DecorateJailCells(Room r)
+    {
+        // 1. Enclose cells at X = r.x using Iron Bars
+        GameObject barStraight = LoadPrefab("bar_straight_A");
+        GameObject barCorner = LoadPrefab("bar_innercorner");
         
-        // Gothic layers (even Y in Mixed theme) do not support circular sci-fi tunnels
-        if (dungeonTheme == DungeonTheme.Mixed && y % 2 == 0)
+        if (barStraight != null)
         {
-            return CorridorStyle.SquareCorridor;
+            // Separates cell at left from right walkway
+            InstantiateDecor(barStraight, new Vector3(r.x * cellSize + 2.0f, r.y * cellHeight, r.z * cellSize + 1.0f), 90f);
+            InstantiateDecor(barStraight, new Vector3(r.x * cellSize + 2.0f, r.y * cellHeight, (r.z + 1) * cellSize - 1.0f), 90f);
         }
 
-        if (corridorStyle == CorridorStyle.Mixed)
+        // 2. Jail cell internal furniture (straw bed, stool, plate with bones)
+        GameObject bedFloor = LoadPrefab("bed_floor");
+        GameObject stool = LoadPrefab("stool");
+        GameObject plate = LoadPrefab("plate_food_B"); // Bones plate
+        
+        if (bedFloor != null) InstantiateDecor(bedFloor, new Vector3(r.x * cellSize + 0.6f, r.y * cellHeight + 0.02f, r.z * cellSize + 0.6f), 0f);
+        if (stool != null) InstantiateDecor(stool, new Vector3(r.x * cellSize + 1.4f, r.y * cellHeight, r.z * cellSize + 1.4f), 0f);
+        if (plate != null) InstantiateDecor(plate, new Vector3(r.x * cellSize + 1.4f, r.y * cellHeight + 0.5f, r.z * cellSize + 1.4f), 0f);
+
+        // 3. Ambient lighting
+        GameObject candle = LoadPrefab("candle_lit");
+        if (candle != null)
         {
-            int cellHash = (x * 73856093) ^ (z * 19349663) ^ (y * 83492791) ^ seed;
-            return (System.Math.Abs(cellHash) % 2 == 0) ? CorridorStyle.CircularTunnel : CorridorStyle.SquareCorridor;
+            InstantiateDecor(candle, new Vector3(r.x * cellSize + 1.4f, r.y * cellHeight + 0.92f, r.z * cellSize + 1.4f), 0f);
         }
-        return corridorStyle;
     }
 
-    private GameObject GetFloorPrefab()
+    private void DecorateCellar(Room r)
     {
-        return (dungeonTheme == DungeonTheme.GothicRuins) ? gothicFloorPrefab : floorPrefab;
-    }
-
-    private GameObject GetCeilingPrefab()
-    {
-        return (dungeonTheme == DungeonTheme.GothicRuins) ? gothicCeilingPrefab : ceilingPrefab;
-    }
-
-    private GameObject GetWallPrefab()
-    {
-        return (dungeonTheme == DungeonTheme.GothicRuins) ? gothicWallPrefab : wallPrefab;
-    }
-
-    private GameObject GetDoorwayPrefab()
-    {
-        return (dungeonTheme == DungeonTheme.GothicRuins) ? gothicDoorwayPrefab : doorwayPrefab;
-    }
-
-    private GameObject GetCellFloorPrefab(int x, int y, int z)
-    {
-        if (dungeonTheme == DungeonTheme.Mixed)
+        // 1. Spawns T-split wall divider
+        GameObject tWall = LoadPrefab("wall_Tsplit");
+        if (tWall != null)
         {
-            return (y % 2 == 0) ? gothicFloorPrefab : floorPrefab;
+            InstantiateDecor(tWall, new Vector3((r.x + 1) * cellSize, r.y * cellHeight, (r.z + 1) * cellSize), 180f);
         }
-        return GetFloorPrefab();
+
+        // 2. Brewing barrels (kegs) on dirt side lanes (dirtFloor automatically handled by GetFloorPrefabForCell)
+        GameObject kegDec = LoadPrefab("keg_decorated");
+        GameObject keg = LoadPrefab("keg");
+        if (kegDec != null) InstantiateDecor(kegDec, new Vector3(r.x * cellSize + 0.8f, r.y * cellHeight, r.z * cellSize + 0.8f), 0f);
+        if (keg != null) InstantiateDecor(keg, new Vector3((r.x + 2) * cellSize - 0.8f, r.y * cellHeight, r.z * cellSize + 0.8f), 90f);
+
+        // 3. Feast table
+        GameObject tableLong = LoadPrefab("table_long");
+        GameObject bench = LoadPrefab("bench");
+        if (tableLong != null) InstantiateDecor(tableLong, new Vector3((r.x + 1) * cellSize, r.y * cellHeight, (r.z + 2) * cellSize), 90f);
+        if (bench != null) InstantiateDecor(bench, new Vector3((r.x + 1) * cellSize - 0.8f, r.y * cellHeight, (r.z + 2) * cellSize), 90f);
     }
 
-    private GameObject GetCellCeilingPrefab(int x, int y, int z)
+    private void DecorateGuardPost(Room r)
     {
-        if (dungeonTheme == DungeonTheme.Mixed)
+        // 1. Staircase Y=0 -> Y=1
+        GameObject stairs = LoadPrefab("stairs_narrow");
+        if (stairs != null)
         {
-            return (y % 2 == 0) ? gothicCeilingPrefab : ceilingPrefab;
+            // Position staircase at left cell, climbing South to North
+            Vector3 stairsPos = new Vector3(r.x * cellSize, r.y * cellHeight, r.z * cellSize);
+            InstantiateDecor(stairs, stairsPos, 0f); // 180 rot offset handled in prefab gen or here. Y-height automatically reaches 4m
+            
+            // Mark cell type as Stairs for physical wall and hole inspection
+            grid[r.x, r.y, r.z].type = CellType.Stairs;
+            grid[r.x, r.y, r.z].rotation = 0;
         }
-        return GetCeilingPrefab();
+
+        // 2. Raised Platform (Y=1) barrier railings and ending columns
+        GameObject barrier = LoadPrefab("barrier");
+        GameObject column = LoadPrefab("column");
+        if (barrier != null)
+        {
+            // Railing at platform edge facing the Y=0 void
+            InstantiateDecor(barrier, new Vector3((r.x + 1) * cellSize, (r.y + 1) * cellHeight, r.z * cellSize + 2.0f), 0f);
+        }
+        if (column != null)
+        {
+            // Left end-cap
+            InstantiateDecor(column, new Vector3((r.x + 1) * cellSize - 2.0f, (r.y + 1) * cellHeight, r.z * cellSize + 2.0f), 0f);
+            // Right end-cap
+            InstantiateDecor(column, new Vector3((r.x + 1) * cellSize + 2.0f, (r.y + 1) * cellHeight, r.z * cellSize + 2.0f), 0f);
+        }
+
+        // 3. Props: broken table below, treasure chest above
+        GameObject tableBroken = LoadPrefab("table_medium_broken");
+        GameObject chest = LoadPrefab("chest_gold");
+        if (tableBroken != null) InstantiateDecor(tableBroken, new Vector3((r.x + 1) * cellSize, r.y * cellHeight, r.z * cellSize), 30f);
+        if (chest != null) InstantiateDecor(chest, new Vector3((r.x + 1) * cellSize, (r.y + 1) * cellHeight, (r.z + 1) * cellSize), 180f);
+
+        // 4. Mounted wall torch
+        GameObject torch = LoadPrefab("torch_mounted");
+        if (torch != null)
+        {
+            InstantiateDecor(torch, new Vector3((r.x + 1) * cellSize, r.y * cellHeight + 2.5f, (r.z + 1) * cellSize + 2.0f), 0f);
+        }
     }
 
-    private GameObject GetCellWallPrefab(int x, int y, int z)
+    private void DecorateMageLibrary(Room r)
     {
-        if (dungeonTheme == DungeonTheme.Mixed)
+        // 1. Spawns double bookcase and single bookcase against walls
+        GameObject doubleBookcase = LoadPrefab("bookcase_double_decoratedA");
+        GameObject singleBookcase = LoadPrefab("bookcase_single_decoratedB");
+        if (doubleBookcase != null) InstantiateDecor(doubleBookcase, new Vector3(r.x * cellSize + 1.0f, r.y * cellHeight, (r.z + 1) * cellSize + 1.6f), 180f);
+        if (singleBookcase != null) InstantiateDecor(singleBookcase, new Vector3(r.x * cellSize - 1.0f, r.y * cellHeight, (r.z + 1) * cellSize + 1.6f), 180f);
+
+        // 2. Study desk and chairs in the center
+        GameObject tableLong = LoadPrefab("table_long");
+        GameObject chair = LoadPrefab("chair");
+        if (tableLong != null) InstantiateDecor(tableLong, new Vector3(r.x * cellSize + 1.0f, r.y * cellHeight, r.z * cellSize + 1.0f), 90f);
+        if (chair != null)
         {
-            return (y % 2 == 0) ? gothicWallPrefab : wallPrefab;
+            InstantiateDecor(chair, new Vector3(r.x * cellSize + 1.0f, r.y * cellHeight, r.z * cellSize + 0.2f), 0f);
+            InstantiateDecor(chair, new Vector3(r.x * cellSize + 1.0f, r.y * cellHeight, r.z * cellSize + 1.8f), 180f);
         }
-        return GetWallPrefab();
+
+        // 3. Scattered books and candle lit lightings
+        GameObject book1 = LoadPrefab("book_brown");
+        GameObject book2 = LoadPrefab("book_grey");
+        GameObject candle = LoadPrefab("candle_lit");
+        if (book1 != null) InstantiateDecor(book1, new Vector3(r.x * cellSize + 0.8f, r.y * cellHeight + 1.0f, r.z * cellSize + 0.8f), 15f);
+        if (book2 != null) InstantiateDecor(book2, new Vector3(r.x * cellSize + 1.2f, r.y * cellHeight + 1.0f, r.z * cellSize + 1.1f), -45f);
+        if (candle != null) InstantiateDecor(candle, new Vector3(r.x * cellSize + 1.0f, r.y * cellHeight + 1.0f, r.z * cellSize + 1.0f), 0f);
+
+        // Hanging banner
+        GameObject banner = LoadPrefab("banner_green");
+        if (banner != null) InstantiateDecor(banner, new Vector3(r.x * cellSize + 2.0f, r.y * cellHeight + 2.0f, (r.z + 1) * cellSize), 90f);
     }
 
-    private GameObject GetCellDoorwayPrefab(int x, int y, int z)
+    private void DecorateGoldTreasury(Room r)
     {
-        if (dungeonTheme == DungeonTheme.Mixed)
+        // 1. Spawns dark wood floor runner in the center path (woodFloor automatically handled by GetFloorPrefabForCell)
+
+        // 2. Large gold treasure chest and stacks of coins
+        GameObject chestLarge = LoadPrefab("chest_large_gold");
+        GameObject coinStackL = LoadPrefab("coin_stack_large");
+        GameObject coinStackM = LoadPrefab("coin_stack_medium");
+        
+        if (chestLarge != null) InstantiateDecor(chestLarge, new Vector3((r.x + 1) * cellSize, r.y * cellHeight, (r.z + 1) * cellSize + 1.0f), 180f);
+        if (coinStackL != null)
         {
-            return (y % 2 == 0) ? gothicDoorwayPrefab : doorwayPrefab;
+            InstantiateDecor(coinStackL, new Vector3((r.x + 1) * cellSize - 1.2f, r.y * cellHeight, (r.z + 1) * cellSize + 0.8f), 0f);
+            InstantiateDecor(coinStackL, new Vector3((r.x + 1) * cellSize + 1.2f, r.y * cellHeight, (r.z + 1) * cellSize + 0.8f), 0f);
         }
-        return GetDoorwayPrefab();
+        if (coinStackM != null)
+        {
+            InstantiateDecor(coinStackM, new Vector3((r.x + 1) * cellSize - 0.8f, r.y * cellHeight, (r.z + 1) * cellSize + 1.2f), 0f);
+        }
+
+        // 3. Hanging banners
+        GameObject banner = LoadPrefab("banner_yellow");
+        if (banner != null)
+        {
+            InstantiateDecor(banner, new Vector3((r.x + 1) * cellSize - 2.0f, r.y * cellHeight + 2.0f, (r.z + 1) * cellSize), 90f);
+            InstantiateDecor(banner, new Vector3((r.x + 1) * cellSize + 2.0f, r.y * cellHeight + 2.0f, (r.z + 1) * cellSize), -90f);
+        }
+    }
+
+    private void DecorateSewerDock(Room r)
+    {
+        // 1. Water grates on Y=0 lower level waterway (grate automatically handled by GetFloorPrefabForCell)
+
+        // 2. Floating barrels in waterway
+        GameObject keg = LoadPrefab("keg");
+        if (keg != null)
+        {
+            InstantiateDecor(keg, new Vector3(r.x * cellSize + 0.5f, r.y * cellHeight, r.z * cellSize + 0.8f), 15f);
+        }
+
+        // 3. Wooden stairs going down from land bridge to waterway
+        GameObject stairsWood = LoadPrefab("stairs_wood");
+        if (stairsWood != null)
+        {
+            InstantiateDecor(stairsWood, new Vector3((r.x + 1) * cellSize, r.y * cellHeight, r.z * cellSize), 0f);
+            
+            // Mark cell type as Stairs for physical wall and hole inspection
+            grid[r.x + 1, r.y, r.z].type = CellType.Stairs;
+            grid[r.x + 1, r.y, r.z].rotation = 0;
+        }
+
+        // 4. Bridge railings (with start/middle/end columns)
+        GameObject barrier = LoadPrefab("barrier");
+        GameObject column = LoadPrefab("column");
+        if (barrier != null)
+        {
+            InstantiateDecor(barrier, new Vector3((r.x + 1) * cellSize - 2.0f, (r.y + 1) * cellHeight, r.z * cellSize), 90f);
+            InstantiateDecor(barrier, new Vector3((r.x + 1) * cellSize - 2.0f, (r.y + 1) * cellHeight, (r.z + 1) * cellSize), 90f);
+        }
+        if (column != null)
+        {
+            // Start end-cap
+            InstantiateDecor(column, new Vector3((r.x + 1) * cellSize - 2.0f, (r.y + 1) * cellHeight, r.z * cellSize - 2.0f), 0f);
+            // Middle connection joint column
+            InstantiateDecor(column, new Vector3((r.x + 1) * cellSize - 2.0f, (r.y + 1) * cellHeight, r.z * cellSize + 2.0f), 0f);
+            // End end-cap
+            InstantiateDecor(column, new Vector3((r.x + 1) * cellSize - 2.0f, (r.y + 1) * cellHeight, r.z * cellSize + 6.0f), 0f);
+        }
+    }
+
+    private void DecorateCastleHall(Room r)
+    {
+        // 1. Spawns two stone staircases for multi-tier navigation
+        GameObject stairs = LoadPrefab("stairs_narrow");
+        if (stairs != null)
+        {
+            // Stair 1 (Y=0 to Y=1): left side
+            InstantiateDecor(stairs, new Vector3(r.x * cellSize, r.y * cellHeight, r.z * cellSize), 0f);
+            grid[r.x, r.y, r.z].type = CellType.Stairs;
+            grid[r.x, r.y, r.z].rotation = 0;
+            
+            // Stair 2 (Y=1 to Y=2): right side
+            InstantiateDecor(stairs, new Vector3((r.x + 2) * cellSize, (r.y + 1) * cellHeight, (r.z + 2) * cellSize), 180f);
+            grid[r.x + 2, r.y + 1, r.z + 2].type = CellType.Stairs;
+            grid[r.x + 2, r.y + 1, r.z + 2].rotation = 180;
+        }
+
+        // 2. Balcony railings (Y=1 and Y=2 exposed edges with columns)
+        GameObject barrier = LoadPrefab("barrier");
+        GameObject column = LoadPrefab("column");
+        if (barrier != null)
+        {
+            // Y=1 balcony edge
+            InstantiateDecor(barrier, new Vector3(r.x * cellSize + 2.0f, (r.y + 1) * cellHeight, (r.z + 1) * cellSize), 90f);
+            
+            // Y=2 high balcony edge
+            InstantiateDecor(barrier, new Vector3((r.x + 1) * cellSize, (r.y + 2) * cellHeight, (r.z + 2) * cellSize - 2.0f), 0f);
+        }
+        if (column != null)
+        {
+            // Y=1 balcony edge end caps
+            InstantiateDecor(column, new Vector3(r.x * cellSize + 2.0f, (r.y + 1) * cellHeight, (r.z + 1) * cellSize - 2.0f), 0f);
+            InstantiateDecor(column, new Vector3(r.x * cellSize + 2.0f, (r.y + 1) * cellHeight, (r.z + 1) * cellSize + 2.0f), 0f);
+            
+            // Y=2 high balcony edge end caps
+            InstantiateDecor(column, new Vector3((r.x + 1) * cellSize - 2.0f, (r.y + 2) * cellHeight, (r.z + 2) * cellSize - 2.0f), 0f);
+            InstantiateDecor(column, new Vector3((r.x + 1) * cellSize + 2.0f, (r.y + 2) * cellHeight, (r.z + 2) * cellSize - 2.0f), 0f);
+        }
+
+        // 3. Furniture layout per layer
+        GameObject tableSmall = LoadPrefab("table_small");
+        GameObject tableMedium = LoadPrefab("table_medium");
+        GameObject tableCloth = LoadPrefab("table_small_tablecloth");
+        GameObject chair = LoadPrefab("chair");
+
+        if (tableSmall != null) InstantiateDecor(tableSmall, new Vector3((r.x + 1) * cellSize, r.y * cellHeight, r.z * cellSize + 1.0f), 0f);
+        if (tableMedium != null) InstantiateDecor(tableMedium, new Vector3(r.x * cellSize, (r.y + 1) * cellHeight, (r.z + 1) * cellSize), 90f);
+        if (tableCloth != null) InstantiateDecor(tableCloth, new Vector3((r.x + 1) * cellSize, (r.y + 2) * cellHeight, (r.z + 2) * cellSize + 1.0f), 0f);
+        if (chair != null)
+        {
+            InstantiateDecor(chair, new Vector3((r.x + 1) * cellSize - 0.8f, (r.y + 2) * cellHeight, (r.z + 2) * cellSize + 1.0f), 90f);
+            InstantiateDecor(chair, new Vector3((r.x + 1) * cellSize + 0.8f, (r.y + 2) * cellHeight, (r.z + 2) * cellSize + 1.0f), -90f);
+        }
+    }
+
+    private void DecorateMineShaft(Room r)
+    {
+        // 1. Spawns wood frames (scaffolding) supporting upper platform
+        GameObject scaffold = LoadPrefab("scaffold_frame_large");
+        if (scaffold != null)
+        {
+            // Centered under the Y=2 platform
+            InstantiateDecor(scaffold, new Vector3((r.x + 1) * cellSize, r.y * cellHeight, (r.z + 1) * cellSize), 0f);
+        }
+
+        // 2. Miner's rest bed on Y=1 lower level
+        GameObject bed = LoadPrefab("bed_A_single");
+        GameObject tools = LoadPrefab("bucket_pickaxes");
+        if (bed != null) InstantiateDecor(bed, new Vector3(r.x * cellSize + 0.8f, r.y * cellHeight, r.z * cellSize + 0.8f), 90f);
+        if (tools != null) InstantiateDecor(tools, new Vector3(r.x * cellSize + 1.8f, r.y * cellHeight, r.z * cellSize + 0.8f), 0f);
+
+        // 3. Wooden stairs
+        GameObject stairsWood = LoadPrefab("stairs_wood");
+        if (stairsWood != null)
+        {
+            InstantiateDecor(stairsWood, new Vector3((r.x + 1) * cellSize, r.y * cellHeight, r.z * cellSize), 0f);
+            
+            // Mark cell type as Stairs for physical wall and hole inspection
+            grid[r.x + 1, r.y, r.z].type = CellType.Stairs;
+            grid[r.x + 1, r.y, r.z].rotation = 0;
+        }
+
+        // 4. Gold veins and rock ores on upper mine platform Y=2
+        GameObject goldVein = LoadPrefab("rocks_gold");
+        GameObject normalRock = LoadPrefab("rocks");
+        GameObject pickaxe = LoadPrefab("pickaxe");
+        if (goldVein != null) InstantiateDecor(goldVein, new Vector3((r.x + 2) * cellSize - 0.8f, (r.y + 1) * cellHeight, (r.z + 2) * cellSize - 0.8f), 45f);
+        if (normalRock != null) InstantiateDecor(normalRock, new Vector3(r.x * cellSize + 0.8f, (r.y + 1) * cellHeight, (r.z + 2) * cellSize - 0.8f), 0f);
+        if (pickaxe != null) InstantiateDecor(pickaxe, new Vector3((r.x + 2) * cellSize - 1.2f, (r.y + 1) * cellHeight, (r.z + 2) * cellSize - 1.2f), -15f);
+    }
+
+    private void DecorateLivingQuarters(Room r)
+    {
+        // 1. Spawns wood stairs Y=0 -> Y=1
+        GameObject stairsWood = LoadPrefab("stairs_wood");
+        if (stairsWood != null)
+        {
+            InstantiateDecor(stairsWood, new Vector3(r.x * cellSize, r.y * cellHeight, r.z * cellSize), 0f);
+            
+            // Mark cell type as Stairs for physical wall and hole inspection
+            grid[r.x, r.y, r.z].type = CellType.Stairs;
+            grid[r.x, r.y, r.z].rotation = 0;
+        }
+
+        // 2. Layer 0: Dining Mess Hall (table with tablecloth + benches)
+        GameObject tableCloth = LoadPrefab("table_long_tablecloth");
+        GameObject bench = LoadPrefab("bench");
+        if (tableCloth != null) InstantiateDecor(tableCloth, new Vector3((r.x + 1) * cellSize, r.y * cellHeight, (r.z + 1) * cellSize), 90f);
+        if (bench != null)
+        {
+            InstantiateDecor(bench, new Vector3((r.x + 1) * cellSize - 0.8f, r.y * cellHeight, (r.z + 1) * cellSize), 90f);
+            InstantiateDecor(bench, new Vector3((r.x + 1) * cellSize + 0.8f, r.y * cellHeight, (r.z + 1) * cellSize), 90f);
+        }
+
+        // 3. Layer 1: Living/Sleeping quarters
+        GameObject bed = LoadPrefab("bed_A_single");
+        GameObject bookcase = LoadPrefab("bookcase_double");
+        GameObject tableSmall = LoadPrefab("table_small");
+        GameObject crates = LoadPrefab("box_stacked");
+
+        if (bed != null)
+        {
+            InstantiateDecor(bed, new Vector3((r.x + 1) * cellSize - 0.6f, (r.y + 1) * cellHeight, (r.z + 1) * cellSize + 1.2f), 180f);
+            InstantiateDecor(bed, new Vector3((r.x + 1) * cellSize + 0.6f, (r.y + 1) * cellHeight, (r.z + 1) * cellSize + 1.2f), 180f);
+        }
+        if (bookcase != null) InstantiateDecor(bookcase, new Vector3(r.x * cellSize + 1.0f, (r.y + 1) * cellHeight, (r.z + 1) * cellSize + 1.6f), 180f);
+        if (tableSmall != null) InstantiateDecor(tableSmall, new Vector3((r.x + 1) * cellSize, (r.y + 1) * cellHeight, r.z * cellSize + 0.6f), 0f);
+        if (crates != null) InstantiateDecor(crates, new Vector3((r.x + 1) * cellSize - 1.4f, (r.y + 1) * cellHeight, r.z * cellSize + 0.6f), 45f);
+    }
+
+    private void DecorateTreasureVault(Room r)
+    {
+        // 1. Spawns final big gold chest
+        GameObject chestLarge = LoadPrefab("chest_large_gold");
+        GameObject chestNormal = LoadPrefab("chest_gold");
+        if (chestLarge != null) InstantiateDecor(chestLarge, new Vector3(r.x * cellSize + 2.0f, r.y * cellHeight, r.z * cellSize + 2.0f), 180f);
+        if (chestNormal != null) InstantiateDecor(chestNormal, new Vector3(r.x * cellSize + 0.8f, r.y * cellHeight, r.z * cellSize + 2.4f), 150f);
+
+        // 2. Large piles of gold coins and decorative wall sword shield
+        GameObject coinStackL = LoadPrefab("coin_stack_large");
+        GameObject coinStackM = LoadPrefab("coin_stack_medium");
+        GameObject swordShield = LoadPrefab("sword_shield_gold");
+        
+        if (coinStackL != null)
+        {
+            InstantiateDecor(coinStackL, new Vector3(r.x * cellSize + 1.4f, r.y * cellHeight, r.z * cellSize + 1.4f), 0f);
+            InstantiateDecor(coinStackL, new Vector3(r.x * cellSize + 2.4f, r.y * cellHeight, r.z * cellSize + 1.2f), 0f);
+        }
+        if (coinStackM != null)
+        {
+            InstantiateDecor(coinStackM, new Vector3(r.x * cellSize + 1.8f, r.y * cellHeight, r.z * cellSize + 2.2f), 0f);
+        }
+        if (swordShield != null)
+        {
+            InstantiateDecor(swordShield, new Vector3(r.x * cellSize + 2.0f, r.y * cellHeight + 2.5f, (r.z + 1) * cellSize + 2.0f), 180f);
+        }
+    }
+
+    private void InstantiateDecor(GameObject prefab, Vector3 pos, float rotationY)
+    {
+        if (prefab == null) return;
+        GameObject instance = Instantiate(prefab, pos, Quaternion.Euler(0, rotationY, 0), transform);
+        instance.transform.localScale = Vector3.one;
+        generatedObjects.Add(instance);
+    }
+#endif
+
+    private Room GetRoomById(int id)
+    {
+        return rooms.Find(r => r.id == id);
+    }
+
+    private GameObject GetFloorPrefabForCell(int x, int y, int z)
+    {
+        if (x < 0 || x >= width || z < 0 || z >= height) return floorPrefab;
+        DungeonCell cell = grid[x, y, z];
+        if (cell.type == CellType.Room)
+        {
+            Room r = GetRoomById(cell.roomId);
+            if (r != null)
+            {
+                if (r.theme == "GoldTreasury" && z == r.z + r.h / 2)
+                {
+#if UNITY_EDITOR
+                    return LoadPrefab("floor_wood_large_dark");
+#endif
+                }
+                if (r.theme == "LivingQuarters" && y == r.y + 1)
+                {
+#if UNITY_EDITOR
+                    return LoadPrefab("floor_wood_large_dark");
+#endif
+                }
+                if (r.theme == "SewerDock" && y == r.y && x == r.x)
+                {
+#if UNITY_EDITOR
+                    return LoadPrefab("floor_tile_big_grate");
+#endif
+                }
+                if (r.theme == "JailCells" && z == r.z)
+                {
+#if UNITY_EDITOR
+                    return LoadPrefab("floor_dirt_large");
+#endif
+                }
+                if (r.theme == "Cellar" && (x == r.x || x == r.x + 2))
+                {
+#if UNITY_EDITOR
+                    return LoadPrefab("floor_dirt_large");
+#endif
+                }
+                if (r.theme == "MineShaft" && y == r.y + 1)
+                {
+#if UNITY_EDITOR
+                    return LoadPrefab("floor_dirt_large_rocky");
+#endif
+                }
+            }
+        }
+        return (dungeonTheme == DungeonTheme.GothicRuins || (dungeonTheme == DungeonTheme.Mixed && y % 2 == 0)) ? gothicFloorPrefab : floorPrefab;
+    }
+
+    private GameObject GetCeilingPrefabForCell(int x, int y, int z)
+    {
+        return (dungeonTheme == DungeonTheme.GothicRuins || (dungeonTheme == DungeonTheme.Mixed && y % 2 == 0)) ? gothicCeilingPrefab : ceilingPrefab;
+    }
+
+    private GameObject GetWallPrefabForCell(int x, int y, int z)
+    {
+        if (x < 0 || x >= width || z < 0 || z >= height) return wallPrefab;
+        DungeonCell cell = grid[x, y, z];
+        if (cell.type == CellType.Room)
+        {
+            Room r = GetRoomById(cell.roomId);
+            if (r != null)
+            {
+                if (r.theme == "LivingQuarters" && y == r.y + 1)
+                {
+#if UNITY_EDITOR
+                    return LoadPrefab("wall_scaffold");
+#endif
+                }
+                if (r.theme == "MageLibrary")
+                {
+#if UNITY_EDITOR
+                    // Variety decoration shelves wall
+                    return LoadPrefab("wall_inset_shelves");
+#endif
+                }
+            }
+        }
+        return (dungeonTheme == DungeonTheme.GothicRuins || (dungeonTheme == DungeonTheme.Mixed && y % 2 == 0)) ? gothicWallPrefab : wallPrefab;
+    }
+
+    private GameObject GetDoorwayPrefabForCell(int x, int y, int z)
+    {
+        return (dungeonTheme == DungeonTheme.GothicRuins || (dungeonTheme == DungeonTheme.Mixed && y % 2 == 0)) ? gothicDoorwayPrefab : doorwayPrefab;
     }
 
     public string GetGridLayoutAsString()
     {
         System.Text.StringBuilder sb = new System.Text.StringBuilder();
-        sb.AppendLine("=== LAYER 0 LAYOUT ===");
-        for (int z = height - 1; z >= 0; z--)
+        for (int y = 0; y < layers; y++)
         {
-            for (int x = 0; x < width; x++)
+            sb.AppendLine($"=== LAYER {y} LAYOUT ===");
+            for (int z = height - 1; z >= 0; z--)
             {
-                if (grid == null) return "Grid is null";
-                if (grid[x, 0, z].type == CellType.Room) sb.Append("R");
-                else if (grid[x, 0, z].type == CellType.Corridor) sb.Append("C");
-                else if (grid[x, 0, z].type == CellType.Stairs) sb.Append("S");
-                else sb.Append(".");
+                for (int x = 0; x < width; x++)
+                {
+                    if (grid == null) return "Grid is null";
+                    CellType type = grid[x, y, z].type;
+                    if (type == CellType.Room) sb.Append("R");
+                    else if (type == CellType.Corridor) sb.Append("C");
+                    else if (type == CellType.Doorway) sb.Append("D");
+                    else sb.Append(".");
+                }
+                sb.AppendLine();
             }
-            sb.AppendLine();
         }
         return sb.ToString();
     }
@@ -1219,46 +1427,6 @@ public class GridDungeonGenerator : MonoBehaviour
         {
             DestroyImmediate(child);
         }
-    }
-
-    private void SpawnPillarAt(GameObject prefab, Vector3 pos)
-    {
-        if (prefab == null) return;
-        
-        Vector3 key = new Vector3(
-            Mathf.Round(pos.x * 100f) / 100f,
-            Mathf.Round(pos.y * 100f) / 100f,
-            Mathf.Round(pos.z * 100f) / 100f
-        );
-
-        if (spawnedPillarPositions.Contains(key)) return;
-
-        GameObject pillar = Instantiate(prefab, pos, Quaternion.identity, transform);
-        generatedObjects.Add(pillar);
-        spawnedPillarPositions.Add(key);
-    }
-
-    private void SpawnDoorwayCornersPillars(int x, int y, int z, Vector3 center, Vector2Int dir)
-    {
-        GameObject pillarPref = (y % 2 == 0) ? pillarPrefab : (bunkerPillarPrefab != null ? bunkerPillarPrefab : pillarPrefab);
-        if (pillarPref == null) return;
-
-        Vector3 p1 = Vector3.zero;
-        Vector3 p2 = Vector3.zero;
-
-        if (dir.x != 0)
-        {
-            p1 = center + new Vector3(dir.x * cellSize * 0.5f, 0, cellSize * 0.5f);
-            p2 = center + new Vector3(dir.x * cellSize * 0.5f, 0, -cellSize * 0.5f);
-        }
-        else if (dir.y != 0)
-        {
-            p1 = center + new Vector3(cellSize * 0.5f, 0, dir.y * cellSize * 0.5f);
-            p2 = center + new Vector3(-cellSize * 0.5f, 0, dir.y * cellSize * 0.5f);
-        }
-
-        SpawnPillarAt(pillarPref, p1);
-        SpawnPillarAt(pillarPref, p2);
     }
 }
 

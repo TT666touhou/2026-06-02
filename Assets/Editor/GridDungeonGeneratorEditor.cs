@@ -28,6 +28,16 @@ public class GridDungeonGeneratorEditor : Editor
             Undo.RegisterCreatedObjectUndo(generator.gameObject, "Generate Dungeon");
         }
 
+        // Render Randomize Seed & Generate Button
+        GUI.backgroundColor = new Color(0.2f, 0.4f, 0.6f); // Soft blue
+        if (GUILayout.Button("Randomize Seed & Generate", genButtonStyle, GUILayout.Height(25)))
+        {
+            generator.seed = Random.Range(0, 1000000);
+            generator.GenerateDungeon();
+            Undo.RegisterCreatedObjectUndo(generator.gameObject, "Randomize Seed & Generate");
+        }
+
+
         // Render Clear Button
         GUI.backgroundColor = new Color(0.7f, 0.13f, 0.13f); // Crimson Red
         if (GUILayout.Button("Clear Generated Objects", genButtonStyle, GUILayout.Height(25)))
